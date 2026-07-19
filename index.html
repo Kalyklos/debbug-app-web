@@ -2125,34 +2125,40 @@ function showScreen(id){
   window.scrollTo(0,0);
 }
 
-// ── BOUTON RETOUR DU TÉLÉPHONE (CORRECTION : n'expulse plus de l'application) ──
-// Principe : une entrée "sentinelle" est maintenue dans l'historique du
-// navigateur. Le bouton retour (ou le geste de retour) déclenche alors popstate
-// au lieu de quitter la page ; on ferme l'élément le plus haut (panneau,
-// overlay, sous-vue) ou on recule d'un écran, puis on repousse la sentinelle.
-// Le retour ne peut plus vider l'historique : pour quitter, on ferme l'onglet.
-// Robustesse (fix Android) :
-//  1. pushState est REFUSÉ par Chrome sur file:// et content:// (test du fichier
-//     ouvert en local) → repli sur location.hash, qui crée aussi une entrée.
-//  2. Chrome ignore les entrées ajoutées avant toute interaction (protection
-//     anti-détournement) → armement au chargement ET à chaque geste.
+// ── BOUTON RETOUR DU TÉLÉPHONE ──
+// Le retour navigue EN ARRIÈRE dans l'application (fermer le panneau ouvert,
+// revenir de l'écran réglages à la liste des missions, mettre la partie en
+// pause…) et ne quitte l'application que depuis la page principale.
+// Principe : une entrée "sentinelle" est maintenue dans l'historique ; le
+// retour déclenche alors popstate au lieu de quitter, on exécute l'action de
+// navigation, puis on repousse la sentinelle — sauf à la racine, où on laisse
+// l'historique vide pour que l'appui suivant quitte réellement.
+// Points de robustesse (Android/Chrome) :
+//  1. Chrome IGNORE au retour les entrées d'historique créées sans interaction
+//    de l'utilisateur (protection anti-détournement). La sentinelle n'est donc
+//    JAMAIS créée au chargement : elle est posée au premier geste, et une
+//    sentinelle créée hors geste (réarmement depuis popstate) est doublée d'une
+//    sentinelle "activée" au geste suivant.
+//  2. pushState est refusé sur file:// et content:// (fichier ouvert en local)
+//    → repli sur location.hash, qui crée aussi une entrée d'historique.
 const BACK_HASH='#jeu';
-function armBackTrap(){
+let sentinelActivated=false;   // la sentinelle courante a-t-elle été créée lors d'un geste ?
+function armBackTrap(fromGesture){
   try{
-    if(history.state&&history.state.missionApero)return;   // déjà armé
+    const armed=history.state&&history.state.missionApero;
+    // déjà armé par un geste, ou déjà armé et pas de geste à apporter : rien à faire
+    if(armed&&(sentinelActivated||!fromGesture))return;
     history.pushState({missionApero:true},'');
+    sentinelActivated=!!fromGesture;
   }catch(_){
-    // repli file:// / content:// : le hash crée une entrée d'historique
-    if(location.hash!==BACK_HASH){location.hash=BACK_HASH;}
+    if(location.hash!==BACK_HASH){location.hash=BACK_HASH;sentinelActivated=!!fromGesture;}
   }
 }
-// armement au chargement (navigateurs sans restriction) + à chaque geste ;
-// un hash sentinelle résiduel (rechargement de page) est d'abord nettoyé
-// via location.replace, qui ne crée pas d'entrée d'historique
+// nettoyage d'un hash sentinelle résiduel (rechargement) — sans créer d'entrée
 if(location.hash===BACK_HASH){try{location.replace('#');}catch(_){}}
-armBackTrap();
+// armement / renforcement à chaque geste de l'utilisateur
 ['pointerdown','touchstart','keydown'].forEach(ev=>
-  window.addEventListener(ev,armBackTrap,{passive:true,capture:true})
+  window.addEventListener(ev,()=>armBackTrap(true),{passive:true,capture:true})
 );
 function isShown(id){const el=document.getElementById(id);return !!(el&&el.classList.contains('show'));}
 function currentScreen(){const s=document.querySelector('.screen.active');return s?s.id:null;}
@@ -2166,11 +2172,12 @@ window.addEventListener('popstate',()=>{
   // Si on est SUR la sentinelle, l'événement vient de notre propre réarmement
   // (le repli hash peut déclencher popstate) : ne rien faire.
   if((history.state&&history.state.missionApero)||location.hash===BACK_HASH)return;
+  sentinelActivated=false;   // la sentinelle vient d'être consommée
   // Overlays à choix explicite : le retour ne les ferme pas (éviter une reprise
   // de chrono ou un abandon de sauvegarde accidentels)
-  if(isShown('resume-overlay')||isShown('pause-overlay')){armBackTrap();return;}
-  if(isShown('tuto-overlay')){closeTuto();armBackTrap();return;}
-  if(isShown('victory-confirm')){closeVC();armBackTrap();return;}
+  if(isShown('resume-overlay')||isShown('pause-overlay')){armBackTrap(false);return;}
+  if(isShown('tuto-overlay')){closeTuto();armBackTrap(false);return;}
+  if(isShown('victory-confirm')){closeVC();armBackTrap(false);return;}
   // Panneau coulissant ouvert : le fermer (avec étape intermédiaire pour la machine)
   const openPanelEl=document.querySelector('.panel-overlay.show');
   if(openPanelEl){
@@ -2178,21 +2185,23 @@ window.addEventListener('popstate',()=>{
     if(id==='mecanisme'){
       const sub=document.getElementById('meca-gyroscope').style.display==='block'
              ||document.getElementById('meca-scanner').style.display==='block';
-      if(sub){showMecaGrid();armBackTrap();return;}
+      if(sub){showMecaGrid();armBackTrap(false);return;}
     }
-    closePanel(id);armBackTrap();return;
+    closePanel(id);armBackTrap(false);return;
   }
   // Recul d'un écran quand c'est cohérent
   const sc=currentScreen();
-  if(sc==='s-briefing'){showScreen('s-setup');armBackTrap();return;}
-  if(sc==='s-photo'){showScreen('s-victory');armBackTrap();return;}
-  if(sc==='s-setup'&&allGlacieres.length>1){showScreen('s-missions');armBackTrap();return;}
+  if(sc==='s-briefing'){showScreen('s-setup');armBackTrap(false);return;}
+  if(sc==='s-photo'){showScreen('s-victory');armBackTrap(false);return;}
+  if(sc==='s-setup'&&allGlacieres.length>1){showScreen('s-missions');armBackTrap(false);return;}
+  // Écran de jeu avant le lancement du chrono : revenir aux réglages
+  if(sc==='s-game'&&!started){showScreen('s-setup');armBackTrap(false);return;}
   // Partie en cours : le retour met en pause au lieu de quitter
-  if(sc==='s-game'&&started&&!paused&&!freeMode){openPauseScreen();armBackTrap();return;}
-  // Racine (missions, setup mission unique, jeu à l'arrêt, victoire, défaite…) :
-  // on reste dans l'application — quitter se fait en fermant l'onglet
-  showToast('Pour quitter, fermez l\'onglet — la partie est sauvegardée 💾');
-  armBackTrap();
+  if(sc==='s-game'&&started&&!paused&&!freeMode){openPauseScreen();armBackTrap(false);return;}
+  // Racine (liste des missions, réglages en mission unique, victoire, défaite,
+  // mode libre…) : on NE réarme PAS — l'historique est vide, l'appui suivant
+  // quitte réellement l'application. Tout toucher de l'écran réarme le piège.
+  showToast('Appuyez encore sur retour pour quitter');
 });
 // Garde-fou supplémentaire : si malgré tout le navigateur tente de quitter la
 // page pendant une partie en cours, une confirmation native est demandée
