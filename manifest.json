@@ -1,0 +1,12 @@
+{
+  "name": "Mission Apéro — Smart Escape Game",
+  "short_name": "Mission Apéro",
+  "description": "Escape game mobile de 60 minutes — Smart Escape Game",
+  "start_url": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#07111f",
+  "theme_color": "#07111f",
+  "lang": "fr",
+  "icons": []
+}

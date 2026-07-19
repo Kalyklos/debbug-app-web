@@ -1,0 +1,2213 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<!-- CORRECTION : user-scalable=no retiré (accessibilité — zoom autorisé) -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#07111f">
+<link rel="manifest" href="manifest.json">
+<title>Mission Apéro</title>
+<!-- BUILD v11 — version corrigée suite audit :
+     chrono horodaté + Wake Lock, sauvegarde/restauration de partie,
+     échappement HTML (anti-XSS), pénalité réponse unique, écran pause réactivé,
+     reprise après mission unique, fallback clavier du micro, loupe navigable,
+     jsQR chargé à la demande, code mort supprimé, service worker (hors-ligne),
+     bouton retour du téléphone intercepté (navigation interne, plus de sortie accidentelle) -->
+<meta name="app-build" content="v11-audit-fixes">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+:root{
+  --accent:#ff6600;--accent2:#cc4400;--bg:#07111f;--card:#112233;
+  --gold:#ffc84a;--green:#00e676;--red:#ff4444;--orange:#ff8800;
+  --ice:#d0f0ff;--muted:rgba(208,240,255,0.42);
+  --border:rgba(255,255,255,0.09);--border2:rgba(255,255,255,0.16);
+  --fd:'Bebas Neue',sans-serif;--fb:'Outfit',sans-serif;
+}
+body{background:var(--bg);color:var(--ice);font-family:var(--fb);overflow-x:hidden;}
+#root{position:relative;z-index:1;overflow:hidden;}
+.screen{display:none;flex-direction:column;}
+.screen.active{display:flex;min-height:100vh;}
+
+/* ── LOADING ── */
+#s-loading{align-items:center;justify-content:center;text-align:center;gap:16px;padding:24px;}
+.load-ice{font-size:72px;animation:iceFloat 2s ease-in-out infinite;display:block;}
+@keyframes iceFloat{0%,100%{transform:translateY(0) rotate(-3deg)}50%{transform:translateY(-12px) rotate(3deg)}}
+.load-txt{font-family:var(--fd);font-size:18px;letter-spacing:4px;color:var(--muted);}
+.load-dots::after{content:'...';animation:dots 1.5s infinite;}
+@keyframes dots{0%{content:'.'}33%{content:'..'}66%{content:'...'}}
+/* CORRECTION : message d'erreur réseau explicite + bouton réessayer */
+.load-error{display:none;max-width:320px;font-size:14px;color:var(--red);line-height:1.7;background:rgba(255,68,68,.07);border:1px solid rgba(255,68,68,.25);border-radius:12px;padding:14px;}
+.load-error.visible{display:block;}
+.retry-btn{display:none;padding:12px 30px;border-radius:12px;border:1px solid var(--border2);background:transparent;color:var(--ice);font-family:var(--fd);font-size:17px;letter-spacing:2px;cursor:pointer;}
+.retry-btn.visible{display:block;}
+
+/* ── MISSION SELECT ── */
+#s-missions{padding:0;height:100vh;height:100dvh;overflow-y:auto;-webkit-overflow-scrolling:touch;justify-content:flex-start !important;background:#07111f;background-image:none !important;}
+#s-missions img{max-width:64px;max-height:64px;object-fit:contain;}
+.ms-header{
+  padding:12px 18px 8px;text-align:center;
+  background:linear-gradient(180deg,rgba(7,17,31,1) 0%,rgba(7,17,31,0.8) 100%);
+  position:sticky;top:0;z-index:10;backdrop-filter:blur(10px);
+}
+.ms-brand{font-family:var(--fd);font-size:24px;letter-spacing:5px;color:#fff;display:block;}
+.ms-sub{font-size:10px;letter-spacing:4px;text-transform:uppercase;color:var(--muted);margin-top:2px;}
+.ms-logo{width:60px;height:60px;border-radius:14px;object-fit:contain;display:none;margin:0 auto 6px;}
+
+.tuto-btn{
+  display:flex;align-items:center;gap:10px;
+  margin:6px 18px;padding:8px 16px;
+  border-radius:12px;border:1px solid var(--border2);
+  background:rgba(255,200,74,0.08);cursor:pointer;transition:all .2s;
+  width:calc(100% - 36px);text-align:left;
+}
+.tuto-btn:hover{background:rgba(255,200,74,0.15);}
+.tuto-icon{font-size:20px;}
+.tuto-line{display:flex;align-items:baseline;gap:6px;flex-wrap:nowrap;}
+.tuto-text{font-family:var(--fd);font-size:17px;letter-spacing:2px;color:var(--gold);}
+.tuto-dash{color:var(--muted);font-size:13px;}
+.tuto-sub{font-size:12px;color:var(--muted);}
+
+.missions-grid{padding:6px 18px 20px;display:flex;flex-direction:column;gap:8px;}
+
+.mission-card{
+  border-radius:16px;overflow:hidden;cursor:pointer;
+  position:relative;min-height:120px;
+  transition:transform .2s,box-shadow .2s;
+  border:1px solid var(--border2);
+}
+.mission-card:active{transform:scale(.97);}
+.mission-card:hover{transform:translateY(-2px);box-shadow:0 8px 32px rgba(0,0,0,.4);}
+/* CORRECTION : background-size:150%!important supprimé — cover respecté, visuels non déformés */
+.mission-bg{position:absolute;inset:0;background-size:cover;background-position:center;filter:brightness(0.55);transition:filter .3s;pointer-events:none;}
+.mission-card:hover .mission-bg{filter:brightness(0.7);}
+.mission-overlay{position:absolute;inset:0;background:linear-gradient(135deg,rgba(0,0,0,0.5) 0%,rgba(0,0,0,0.1) 100%);pointer-events:none;}
+.mission-content{position:relative;z-index:2;padding:14px 18px;height:100%;display:flex;flex-direction:column;justify-content:flex-start;}
+.mission-type{font-size:9px;font-weight:700;letter-spacing:4px;text-transform:uppercase;padding:3px 10px;border-radius:4px;display:inline-block;margin-bottom:8px;backdrop-filter:blur(4px);}
+.mission-type.apero{background:rgba(255,102,0,.3);color:#ffaa66;border:1px solid rgba(255,102,0,.4);}
+.mission-type.anniv{background:rgba(200,0,200,.3);color:#ff88ff;border:1px solid rgba(200,0,200,.4);}
+.mission-title{font-family:var(--fd);font-size:26px;letter-spacing:3px;color:#fff;line-height:1;}
+.mission-name{font-size:15px;color:rgba(255,255,255,0.75);margin-top:4px;font-weight:500;}
+.mission-emoji{position:absolute;top:14px;right:14px;font-size:28px;z-index:1;pointer-events:none;}
+.mission-badge{position:absolute;bottom:12px;left:12px;background:rgba(255,102,0,.9);border-radius:6px;padding:4px 10px;font-size:10px;letter-spacing:1px;color:#fff;font-weight:700;z-index:1;pointer-events:none;}
+.mission-card.locked{cursor:not-allowed;filter:grayscale(0.85);}
+.mission-card.locked:hover{transform:none;box-shadow:none;}
+.mission-card.locked:active{transform:none;}
+.mission-card.locked .mission-bg{filter:brightness(0.28) grayscale(0.6);}
+.mission-card.locked .mission-overlay{background:rgba(0,0,0,0.55);}
+.mission-soon{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:3;background:rgba(7,17,31,.85);border:1px solid var(--border2);border-radius:10px;padding:7px 14px;font-family:var(--fd);font-size:15px;letter-spacing:2px;color:var(--ice);white-space:nowrap;pointer-events:none;}
+
+/* ── TUTORIEL ── */
+.tuto-overlay{display:none;position:fixed;inset:0;z-index:200;background:rgba(0,0,0,.9);backdrop-filter:blur(8px);align-items:center;justify-content:center;padding:24px;}
+.tuto-overlay.show{display:flex;}
+.tuto-box{background:var(--card);border:1px solid var(--border2);border-radius:20px;padding:28px 22px;max-width:400px;width:100%;text-align:center;}
+.tuto-box-title{font-family:var(--fd);font-size:30px;letter-spacing:3px;color:var(--gold);margin-bottom:16px;}
+.tuto-steps{text-align:left;margin-bottom:20px;}
+.tuto-step{display:flex;gap:12px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--border);font-size:15px;line-height:1.6;}
+.tuto-step:last-child{border-bottom:none;}
+.tuto-step-num{width:26px;height:26px;border-radius:50%;background:var(--gold);color:var(--bg);font-weight:800;font-size:12px;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.tuto-close{width:100%;padding:13px;border-radius:12px;border:none;background:linear-gradient(135deg,var(--gold),#cc8800);color:var(--bg);font-family:var(--fd);font-size:20px;letter-spacing:3px;cursor:pointer;}
+
+/* ── BRIEFING ── */
+#s-briefing{align-items:center;justify-content:center;padding:24px 18px;}
+.brief-box{width:100%;max-width:440px;background:var(--card);border:1px solid var(--border2);border-radius:24px;padding:26px 20px;display:flex;flex-direction:column;gap:16px;text-align:center;}
+.brief-logo{width:72px;height:72px;border-radius:14px;object-fit:contain;margin:0 auto;display:none;}
+.brief-title{font-family:var(--fd);font-size:33px;letter-spacing:3px;color:var(--gold);}
+.brief-text{font-size:15px;line-height:1.8;color:var(--ice);opacity:.85;background:rgba(0,0,0,.2);border-radius:12px;padding:14px;text-align:left;border:1px solid var(--border);max-height:220px;overflow-y:auto;}
+.brief-start{width:100%;padding:15px;border-radius:14px;border:none;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;font-family:var(--fd);font-size:22px;letter-spacing:4px;cursor:pointer;transition:all .25s;}
+.brief-skip{background:transparent;border:none;color:var(--muted);font-size:13px;letter-spacing:2px;text-transform:uppercase;cursor:pointer;text-decoration:underline;}
+
+/* ── SETUP ── */
+#s-setup{align-items:center;justify-content:center;padding:24px 18px;gap:22px;}
+.brand{text-align:center;}
+.brand-logo{width:90px;height:90px;border-radius:18px;object-fit:contain;display:none;margin:0 auto 12px;border:1px solid var(--border2);}
+.brand-ice{font-size:56px;line-height:1;display:block;animation:iceFloat 4s ease-in-out infinite;}
+.brand-name{font-family:var(--fd);font-size:clamp(40px,10vw,78px);letter-spacing:5px;line-height:.95;background:linear-gradient(155deg,#fff 0%,var(--accent) 55%,var(--accent2) 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;}
+.brand-mission{font-size:12px;letter-spacing:4px;text-transform:uppercase;color:var(--accent);opacity:.6;margin-top:5px;display:none;}
+.setup-box{width:100%;max-width:400px;background:var(--card);border:1px solid var(--border2);border-radius:22px;padding:24px 20px;display:flex;flex-direction:column;gap:20px;}
+.field-label{font-size:11px;font-weight:700;letter-spacing:4px;text-transform:uppercase;color:var(--accent);opacity:.7;margin-bottom:10px;display:block;}
+.stepper{display:flex;align-items:center;justify-content:center;gap:14px;}
+.step-btn{width:46px;height:46px;border-radius:50%;border:2px solid var(--border2);background:transparent;color:var(--accent);font-size:24px;cursor:pointer;transition:all .2s;display:flex;align-items:center;justify-content:center;}
+.step-btn:hover{background:rgba(255,102,0,.15);border-color:var(--accent);}
+.step-val{font-family:var(--fd);font-size:60px;color:#fff;width:68px;text-align:center;line-height:1;}
+.step-max{font-size:10px;color:var(--muted);text-align:center;margin-top:2px;letter-spacing:2px;}
+.brief-btn{width:100%;padding:12px;border-radius:11px;border:1px solid var(--gold);background:transparent;color:var(--gold);font-family:var(--fd);font-size:15px;letter-spacing:3px;cursor:pointer;transition:all .2s;}
+.brief-btn:hover{background:rgba(255,200,74,.1);}
+.launch-btn{width:100%;padding:16px;border-radius:15px;border:none;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;font-family:var(--fd);font-size:24px;letter-spacing:4px;cursor:pointer;transition:all .25s;box-shadow:0 0 28px rgba(255,102,0,.25);}
+.launch-btn:hover{transform:translateY(-2px);box-shadow:0 0 44px rgba(255,102,0,.4);}
+
+/* ── TOPBAR ── */
+#s-game{padding:0;}
+.topbar{
+  position:sticky;top:0;z-index:50;
+  display:flex;align-items:center;justify-content:space-between;
+  padding:10px 16px;
+  background:rgba(7,17,31,.95);border-bottom:1px solid var(--border);
+  backdrop-filter:blur(14px);
+}
+.topbar-logo{width:44px;height:44px;border-radius:10px;object-fit:contain;display:none;}
+.topbar-lock{font-size:38px;line-height:1;}
+.players-chip{
+  background:rgba(255,102,0,.15);border:1px solid rgba(255,102,0,.4);
+  border-radius:22px;padding:7px 14px;
+  font-size:16px;font-weight:700;color:var(--accent);
+  display:flex;align-items:center;gap:4px;
+}
+.topbar-center{display:flex;flex-direction:column;align-items:center;gap:2px;}
+.topbar-indices{
+  font-size:10px;letter-spacing:2px;color:var(--muted);
+  display:flex;align-items:center;gap:6px;
+}
+.topbar-pen{font-size:10px;color:var(--orange);display:none;}
+.topbar-pen.visible{display:inline;}
+
+/* ── HEAT GAUGE ── */
+.heat-bar{height:3px;background:rgba(255,255,255,.06);position:relative;overflow:hidden;}
+.heat-fill{height:100%;width:0%;background:linear-gradient(90deg,#00d4ff,#ff6600,#ff0000);transition:width .5s ease;}
+.heat-label{display:none;position:fixed;top:70px;left:50%;transform:translateX(-50%);background:linear-gradient(135deg,var(--orange),var(--red));color:#fff;font-family:var(--fd);font-size:14px;letter-spacing:2px;padding:10px 22px;border-radius:28px;z-index:180;white-space:nowrap;box-shadow:0 0 28px rgba(255,136,0,.5);animation:pulse2 1.5s infinite;}
+.heat-label.show{display:block;}
+@keyframes pulse2{0%,100%{transform:translateX(-50%) scale(1)}50%{transform:translateX(-50%) scale(1.04)}}
+
+/* ── GAME BODY ── */
+.game-body{flex:1;overflow-y:auto;padding:10px 14px 88px;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;gap:8px;}
+
+.timer-box{width:100%;max-width:300px;display:flex;flex-direction:column;align-items:center;gap:4px;margin-top:2px;}
+.timer-rect{
+  width:100%;border-radius:14px;
+  border:3px solid rgba(255,102,0,.9);
+  background:rgba(7,17,31,.9);
+  box-shadow:0 6px 16px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.06);
+  padding:4px 0 2px;text-align:center;
+}
+.timer{font-family:var(--fd);font-size:84px;letter-spacing:5px;color:#fff;line-height:1;transition:color .4s;}
+.timer.warn{color:var(--orange);text-shadow:0 0 14px rgba(255,136,0,.5);}
+.timer.danger{color:var(--red);text-shadow:0 0 14px rgba(255,68,68,.5);animation:blink 1s infinite;}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.5}}
+.timer-sub{font-size:10px;letter-spacing:3px;color:var(--muted);text-transform:uppercase;margin-top:1px;}
+
+.crown{position:relative;width:300px;height:352px;margin:2px auto 0;}
+.crown-item{position:absolute;top:50%;left:50%;display:flex;flex-direction:column;align-items:center;gap:5px;}
+.btn-off{opacity:.3;filter:grayscale(1);pointer-events:none;}
+.crown-center{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;gap:5px;}
+.cr-label{font-family:var(--fd);font-size:13px;letter-spacing:2px;line-height:1;white-space:nowrap;text-shadow:0 1px 3px rgba(0,0,0,.85);}
+
+.cr-pos-0{transform:translate(calc(-50% + 0px),  calc(-50% - 122px));}
+.cr-pos-1{transform:translate(calc(-50% + 92px), calc(-50% - 58px));}
+.cr-pos-2{transform:translate(calc(-50% + 92px), calc(-50% + 58px));}
+.cr-pos-3{transform:translate(calc(-50% + 0px),  calc(-50% + 122px));}
+.cr-pos-4{transform:translate(calc(-50% - 92px), calc(-50% + 58px));}
+.cr-pos-5{transform:translate(calc(-50% - 92px), calc(-50% - 58px));}
+
+.action-btn{
+  width:80px;height:80px;border-radius:50%;
+  cursor:pointer;transition:transform .12s,box-shadow .12s;
+  display:flex;align-items:center;justify-content:center;
+  background:rgba(8,18,32,.9);
+  border:3px solid rgba(255,255,255,.25);
+  box-shadow:0 6px 14px rgba(0,0,0,.55),inset 0 2px 0 rgba(255,255,255,.08),inset 0 -3px 6px rgba(0,0,0,.45);
+}
+.action-btn:active{transform:translateY(2px) scale(.97);box-shadow:0 2px 6px rgba(0,0,0,.5),inset 0 2px 0 rgba(255,255,255,.05),inset 0 -2px 5px rgba(0,0,0,.5);}
+.action-btn:focus-visible{outline:3px solid var(--gold);outline-offset:3px;}
+.action-emoji{font-size:34px;line-height:1;}
+
+.crown-center .action-btn{width:92px;height:92px;}
+.crown-center .action-emoji{font-size:40px;}
+
+.action-btn.indice{border-color:rgba(255,200,74,.9);}
+.cr-label.indice{color:var(--gold);font-size:15px;}
+.action-btn.mecanisme{border-color:rgba(0,212,255,.9);}
+.cr-label.mecanisme{color:#00d4ff;}
+.action-btn.code{border-color:rgba(0,230,118,.9);}
+.cr-label.code{color:var(--green);}
+.action-btn.micro{border-color:rgba(255,68,68,.9);}
+.cr-label.micro{color:var(--red);}
+.action-btn.loupe{border-color:rgba(255,255,255,.75);}
+.cr-label.loupe{color:#fff;}
+.action-btn.pause{border-color:rgba(255,136,0,.85);}
+.cr-label.pause{color:var(--orange);}
+#crown-pause-item .action-btn{border-color:rgba(0,230,118,.85);}
+#crown-pause-item .cr-label{color:var(--green);}
+#crown-pause-item.running .action-btn{border-color:rgba(255,136,0,.85);}
+#crown-pause-item.running .cr-label{color:var(--orange);}
+.action-btn.eye{border-color:rgba(255,200,74,.7);}
+.cr-label.eye{color:var(--gold);}
+
+/* ── PANELS ── */
+.panel-overlay{display:none;position:fixed;inset:0;z-index:150;background:rgba(0,0,0,.85);backdrop-filter:blur(8px);align-items:flex-end;justify-content:center;padding:0;}
+#panel-gate{z-index:250;}
+.panel-overlay.show{display:flex;}
+.panel{background:var(--card);border-radius:24px 24px 0 0;border-top:1px solid var(--border2);padding:20px 18px 40px;width:100%;max-width:500px;animation:slidePanel .3s ease;max-height:92vh;overflow-y:auto;-webkit-overflow-scrolling:touch;}
+.panel-fixed-top{position:sticky;top:0;background:var(--card);z-index:5;padding-bottom:6px;}
+@keyframes slidePanel{from{transform:translateY(100%)}to{transform:translateY(0)}}
+.panel-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;}
+.panel-title{font-family:var(--fd);font-size:25px;letter-spacing:3px;}
+.panel-close{background:transparent;border:1px solid var(--border);color:var(--muted);font-size:13px;padding:6px 14px;border-radius:8px;cursor:pointer;font-family:var(--fb);}
+
+/* CORRECTION : mention vie privée caméra / micro */
+.privacy-note{font-size:11px;color:var(--muted);text-align:center;margin-top:10px;line-height:1.5;}
+
+/* Numpad */
+.numdisp{display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.4);border:2px solid var(--border2);border-radius:12px;padding:10px 16px;margin-bottom:10px;min-height:58px;gap:5px;}
+.numdisp-val{font-family:var(--fd);font-size:42px;letter-spacing:6px;color:#fff;line-height:1;min-width:28px;text-align:center;}
+.numdisp-cursor{width:2px;height:38px;background:var(--accent);border-radius:2px;animation:cur 1s infinite;}
+@keyframes cur{0%,100%{opacity:1}50%{opacity:0}}
+.numpad{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;}
+.npbtn{padding:12px;border-radius:10px;border:1px solid var(--border);background:rgba(255,255,255,.04);color:#fff;font-family:var(--fd);font-size:22px;cursor:pointer;transition:all .12s;text-align:center;user-select:none;}
+.npbtn:active{transform:scale(.88);background:rgba(255,102,0,.15);}
+.npbtn.del{color:var(--orange);font-size:15px;}
+.npbtn.go{background:rgba(255,102,0,.15);border-color:var(--accent);color:var(--accent);font-size:14px;letter-spacing:2px;}
+
+/* Hint result */
+.hint-result{border-radius:14px;border:1px solid var(--border);overflow:hidden;margin-top:12px;display:none;animation:fadeIn .3s ease;}
+.hint-result.visible{display:block;}
+@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+.hint-header{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:rgba(0,0,0,.3);border-bottom:1px solid var(--border);}
+.hint-badge{font-size:9px;font-weight:700;letter-spacing:4px;text-transform:uppercase;color:var(--accent);}
+.penalty-badge{font-size:9px;font-weight:600;color:var(--red);background:rgba(255,68,68,.1);border:1px solid rgba(255,68,68,.3);border-radius:16px;padding:3px 9px;}
+.hint-img-wrap{background:#000;display:flex;align-items:center;justify-content:center;min-height:160px;max-height:320px;overflow:hidden;}
+.hint-img-wrap img{width:100%;max-height:320px;object-fit:contain;display:block;}
+.hint-ph{text-align:center;padding:28px 16px;color:var(--muted);}
+.hint-caption{padding:10px 14px;background:rgba(0,0,0,.2);font-size:13px;line-height:1.6;color:var(--ice);}
+.hint-answer-btn{width:100%;padding:10px;border:none;background:linear-gradient(135deg,var(--orange),#cc4400);color:#fff;font-family:var(--fd);font-size:14px;letter-spacing:2px;cursor:pointer;display:none;}
+.hint-answer-btn.visible{display:block;}
+.hint-error{display:none;text-align:center;padding:14px;border-radius:12px;border:1px dashed rgba(255,136,0,.3);background:rgba(255,136,0,.06);color:var(--orange);font-size:13px;margin-top:10px;}
+.hint-error.visible{display:block;}
+.jc-message{display:none;text-align:center;padding:12px 14px;border-radius:12px;background:rgba(255,200,74,.08);border:1px solid rgba(255,200,74,.2);color:var(--gold);font-size:13px;font-style:italic;margin-top:10px;animation:fadeIn .3s ease;}
+.jc-message.visible{display:block;}
+.history-mini{margin-top:10px;}
+.section-label{font-size:9px;letter-spacing:4px;text-transform:uppercase;color:var(--muted);margin-bottom:8px;display:block;}
+.history-item{display:flex;align-items:center;gap:10px;padding:9px 12px;background:rgba(0,0,0,.25);border:1px solid var(--border);border-radius:10px;margin-bottom:6px;cursor:pointer;transition:all .2s;}
+.history-item:hover{border-color:var(--border2);}
+.history-num{font-family:var(--fd);font-size:20px;color:var(--accent);min-width:30px;text-align:center;}
+.history-label{font-size:11px;color:var(--muted);}
+.history-arrow{margin-left:auto;color:var(--muted);font-size:12px;}
+
+/* Mécanisme */
+.meca-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px;}
+.meca-btn{padding:18px 10px;border-radius:14px;border:1px solid var(--border2);background:rgba(0,0,0,.3);cursor:pointer;transition:all .2s;text-align:center;}
+.meca-btn:active{transform:scale(.93);}
+.meca-emoji{font-size:32px;display:block;margin-bottom:8px;}
+.meca-label{font-family:var(--fd);font-size:14px;letter-spacing:2px;color:var(--ice);}
+.compass-wrap{width:200px;height:200px;border-radius:50%;border:3px solid rgba(0,212,255,.3);margin:16px auto;position:relative;background:radial-gradient(circle,rgba(0,30,60,.8),rgba(0,10,30,.95));display:flex;align-items:center;justify-content:center;}
+.compass-needle{width:4px;height:80px;background:linear-gradient(180deg,var(--red) 50%,#fff 50%);border-radius:2px;transform-origin:50% 100%;transition:transform .3s ease;position:absolute;bottom:50%;}
+.compass-deg{font-family:var(--fd);font-size:28px;color:#fff;letter-spacing:2px;text-align:center;}
+.compass-dir{font-size:11px;color:var(--muted);letter-spacing:2px;text-align:center;}
+.compass-letters{position:absolute;inset:8px;}
+.c-n{position:absolute;top:6px;left:50%;transform:translateX(-50%);font-family:var(--fd);font-size:14px;color:var(--red);}
+.c-s{position:absolute;bottom:6px;left:50%;transform:translateX(-50%);font-family:var(--fd);font-size:14px;color:var(--muted);}
+.c-e{position:absolute;right:10px;top:50%;transform:translateY(-50%);font-family:var(--fd);font-size:14px;color:var(--muted);}
+.c-w{position:absolute;left:10px;top:50%;transform:translateY(-50%);font-family:var(--fd);font-size:14px;color:var(--muted);}
+.gyro-val{font-family:var(--fd);font-size:14px;color:var(--muted);text-align:center;margin-top:8px;letter-spacing:2px;}
+.hold-progress-bar{width:100%;height:14px;border-radius:8px;background:rgba(0,212,255,.12);border:1px solid rgba(0,212,255,.25);overflow:hidden;}
+.hold-progress-fill{height:100%;width:0%;background:linear-gradient(90deg,var(--accent),#00ffcc);transition:width .1s linear;}
+
+/* Micro */
+.micro-wave{width:120px;height:120px;border-radius:50%;border:3px solid var(--red);margin:16px auto;display:flex;align-items:center;justify-content:center;font-size:48px;position:relative;}
+.micro-wave::before,.micro-wave::after{content:'';position:absolute;border-radius:50%;border:2px solid rgba(255,68,68,.3);animation:microPulse 1.5s infinite;}
+.micro-wave::before{inset:-10px;}
+.micro-wave::after{inset:-20px;animation-delay:.5s;}
+@keyframes microPulse{0%{opacity:.8;transform:scale(1)}100%{opacity:0;transform:scale(1.3)}}
+.micro-status{font-family:var(--fd);font-size:16px;letter-spacing:3px;text-align:center;color:var(--red);margin-top:8px;}
+.micro-result{text-align:center;padding:14px;border-radius:12px;background:rgba(0,230,118,.08);border:1px solid rgba(0,230,118,.2);color:var(--green);font-size:14px;margin-top:12px;display:none;}
+.micro-result.visible{display:block;}
+/* CORRECTION : repli clavier pour l'outil micro (navigateurs sans reconnaissance vocale) */
+.micro-text-row{display:flex;gap:8px;margin-top:12px;}
+.micro-text-row input{flex:1;padding:11px 12px;border-radius:10px;border:1px solid var(--border2);background:rgba(0,0,0,.35);color:#fff;font-family:var(--fb);font-size:15px;outline:none;}
+.micro-text-row input:focus{border-color:rgba(255,68,68,.5);}
+.micro-text-row button{padding:11px 16px;border-radius:10px;border:1px solid rgba(255,68,68,.4);background:rgba(255,68,68,.15);color:var(--red);font-family:var(--fd);font-size:14px;letter-spacing:2px;cursor:pointer;}
+.micro-alt-label{font-size:11px;color:var(--muted);text-align:center;margin-top:14px;letter-spacing:1px;}
+
+/* Scanner */
+.scanner-wrap{width:100%;border-radius:14px;overflow:hidden;background:#000;min-height:200px;display:flex;align-items:center;justify-content:center;position:relative;margin-top:12px;}
+#scanner-video{width:100%;display:none;}
+.scanner-frame{position:absolute;inset:20px;border:2px solid var(--accent);border-radius:8px;box-shadow:0 0 0 2000px rgba(0,0,0,.4);}
+.scanner-corner{position:absolute;width:20px;height:20px;border-color:var(--accent);border-style:solid;}
+.sc-tl{top:18px;left:18px;border-width:3px 0 0 3px;}
+.sc-tr{top:18px;right:18px;border-width:3px 3px 0 0;}
+.sc-bl{bottom:18px;left:18px;border-width:0 0 3px 3px;}
+.sc-br{bottom:18px;right:18px;border-width:0 3px 3px 0;}
+.scanner-line{position:absolute;left:20px;right:20px;height:2px;background:linear-gradient(90deg,transparent,var(--accent),transparent);animation:scanLine 2s infinite;top:20px;}
+@keyframes scanLine{0%{top:20px}100%{top:calc(100% - 20px)}}
+.scanner-ph{text-align:center;padding:30px 20px;color:var(--muted);font-size:13px;}
+.scanner-start-btn{width:100%;padding:13px;border-radius:12px;border:none;background:linear-gradient(135deg,#cc44ff,#8800cc);color:#fff;font-family:var(--fd);font-size:18px;letter-spacing:3px;cursor:pointer;margin-top:12px;}
+.scanner-result{text-align:center;padding:14px;border-radius:12px;background:rgba(200,0,255,.08);border:1px solid rgba(200,0,255,.2);color:#cc88ff;font-size:13px;margin-top:12px;display:none;line-height:1.7;}
+.scanner-result.visible{display:block;}
+#maze-result{position:absolute;inset:0;margin:0;padding:0;border-radius:12px;background:rgba(5,5,15,.96);display:none;align-items:center;justify-content:center;z-index:3;overflow:hidden;}
+#maze-result.visible{display:flex;}
+#maze-result-content img{width:100%;height:100%;object-fit:contain;display:block;border-radius:12px;}
+#maze-result-content{color:#cc88ff;font-size:13px;text-align:center;padding:20px;}
+
+/* ── LOUPE PANEL ── */
+.loupe-filter-wrap{width:100%;border-radius:14px;overflow:hidden;background:#000;min-height:260px;display:flex;align-items:center;justify-content:center;position:relative;margin-top:12px;}
+#loupe-video{width:100%;display:none;}
+.loupe-ph{text-align:center;padding:30px 20px;color:var(--muted);font-size:13px;}
+.loupe-canvas{width:100%;display:none;border-radius:14px;}
+.loupe-start-btn{width:100%;padding:13px;border-radius:12px;border:none;background:linear-gradient(135deg,#00b4ff,#0066cc);color:#fff;font-family:var(--fd);font-size:18px;letter-spacing:3px;cursor:pointer;margin-top:12px;}
+.loupe-stop-btn{width:100%;padding:13px;border-radius:12px;border:1px solid rgba(0,180,255,.3);background:rgba(0,180,255,.15);color:#00d4ff;font-family:var(--fd);font-size:16px;letter-spacing:2px;cursor:pointer;margin-top:8px;display:none;}
+.loupe-info{text-align:center;padding:10px;border-radius:10px;background:rgba(0,212,255,.06);border:1px solid rgba(0,212,255,.2);color:#00d4ff;font-size:12px;margin-top:10px;display:none;}
+.loupe-info.visible{display:block;}
+.loupe-step-badge{background:rgba(0,212,255,.2);border:1px solid rgba(0,212,255,.4);border-radius:8px;padding:4px 12px;font-size:11px;letter-spacing:2px;color:#00d4ff;text-align:center;display:none;}
+.loupe-step-badge.visible{display:block;}
+/* CORRECTION : navigation manuelle entre les loupes (plus d'avancement automatique à la fermeture) */
+.loupe-nav{display:none;align-items:center;justify-content:center;gap:12px;margin-bottom:10px;}
+.loupe-nav.visible{display:flex;}
+.loupe-nav button{width:36px;height:36px;border-radius:50%;border:1px solid rgba(0,212,255,.4);background:rgba(0,212,255,.08);color:#00d4ff;font-size:16px;cursor:pointer;}
+.loupe-zoom{margin-top:12px;display:none;}
+.loupe-zoom.visible{display:block;}
+.loupe-zoom-row{display:flex;justify-content:space-between;align-items:center;font-family:var(--fd);font-size:13px;letter-spacing:2px;color:#00d4ff;margin-bottom:6px;}
+.loupe-zoom input[type=range]{width:100%;accent-color:#00d4ff;height:26px;}
+.loupe-zoom-hint{font-size:10px;color:var(--muted);text-align:center;margin-top:3px;letter-spacing:1px;}
+
+/* ── MORSE PANEL ── */
+.morse-player{background:rgba(0,230,118,.06);border:1px solid rgba(0,230,118,.2);border-radius:14px;padding:18px;text-align:center;margin-top:12px;}
+.morse-icon{font-size:48px;display:block;margin-bottom:8px;}
+.morse-title{font-family:var(--fd);font-size:18px;letter-spacing:3px;color:var(--green);margin-bottom:12px;}
+.morse-play-btn{width:100%;padding:14px;border-radius:12px;border:none;background:linear-gradient(135deg,var(--green),#007a42);color:#fff;font-family:var(--fd);font-size:20px;letter-spacing:3px;cursor:pointer;transition:all .2s;}
+.morse-play-btn:active{transform:scale(.97);}
+.morse-playing{font-size:11px;color:var(--green);letter-spacing:2px;margin-top:8px;display:none;}
+.morse-playing.visible{display:block;}
+
+/* ── BOTTOM BAR ── */
+.bottom-bar{position:fixed;bottom:0;left:0;right:0;z-index:60;display:none;gap:8px;padding:10px 14px 20px;background:linear-gradient(transparent,rgba(7,17,31,.98));}
+#s-game.active .bottom-bar{display:flex;}
+.victory-btn{flex:2;padding:12px;border-radius:12px;border:none;background:linear-gradient(135deg,var(--green),#009944);color:var(--bg);font-family:var(--fd);font-size:14px;letter-spacing:2px;cursor:pointer;transition:all .2s;box-shadow:0 0 18px rgba(0,230,118,.22);}
+.victory-btn:hover{transform:translateY(-1px);}
+
+/* Penalty toast (sert aussi de toast générique) */
+.penalty-toast{position:fixed;top:80px;left:50%;transform:translateX(-50%);background:var(--red);color:#fff;font-family:var(--fd);font-size:16px;letter-spacing:2px;padding:8px 20px;border-radius:28px;opacity:0;pointer-events:none;transition:opacity .3s;z-index:200;white-space:nowrap;max-width:92vw;overflow:hidden;text-overflow:ellipsis;}
+.penalty-toast.show{opacity:1;}
+
+/* Overlays */
+.overlay{display:none;position:fixed;inset:0;z-index:150;background:rgba(0,0,0,.9);backdrop-filter:blur(8px);align-items:center;justify-content:center;flex-direction:column;gap:16px;text-align:center;padding:26px;}
+.overlay.show{display:flex;}
+
+/* Victory */
+#s-victory{align-items:center;justify-content:center;text-align:center;padding:32px 20px;gap:14px;position:relative;overflow:hidden;}
+.victory-emoji{font-size:80px;animation:bounceIn .6s ease;}
+@keyframes bounceIn{0%{transform:scale(0)}60%{transform:scale(1.2)}100%{transform:scale(1)}}
+.victory-title{font-family:var(--fd);font-size:clamp(46px,11.5vw,76px);letter-spacing:4px;color:var(--gold);line-height:.92;}
+.victory-quote{font-size:16px;color:var(--muted);font-style:italic;max-width:300px;line-height:1.6;padding:12px 16px;background:rgba(255,200,74,.06);border-radius:12px;border:1px solid rgba(255,200,74,.15);}
+.stats-box{background:var(--card);border:1px solid var(--border2);border-radius:18px;padding:18px 26px;width:100%;max-width:340px;}
+.stat-row{display:flex;justify-content:space-between;align-items:center;padding:7px 0;}
+.stat-row+.stat-row{border-top:1px solid var(--border);}
+.stat-label{font-size:13px;color:var(--muted);}
+.stat-val{font-family:var(--fd);font-size:22px;color:#fff;letter-spacing:1px;}
+.souvenir-btn{width:100%;max-width:340px;padding:14px;border-radius:13px;border:none;background:linear-gradient(135deg,var(--gold),#cc8800);color:var(--bg);font-family:var(--fd);font-size:19px;letter-spacing:3px;cursor:pointer;transition:all .2s;}
+.souvenir-btn:hover{transform:translateY(-2px);}
+.restart-btn{width:100%;max-width:340px;padding:12px;border-radius:11px;border:1px solid var(--border);background:transparent;color:var(--muted);font-family:var(--fd);font-size:15px;letter-spacing:3px;cursor:pointer;}
+
+/* Confettis */
+.confetti-container{position:fixed;inset:0;pointer-events:none;z-index:300;overflow:hidden;}
+.confetto{position:absolute;width:8px;height:8px;border-radius:2px;animation:confettiFall linear forwards;}
+@keyframes confettiFall{0%{transform:translateY(-20px) rotate(0deg);opacity:1;}100%{transform:translateY(100vh) rotate(720deg);opacity:0;}}
+
+/* Timeup */
+#s-timeup{align-items:center;justify-content:center;text-align:center;padding:32px 20px;gap:14px;}
+.timeup-emoji{font-size:68px;}
+.timeup-title{font-family:var(--fd);font-size:clamp(40px,10vw,66px);letter-spacing:4px;color:var(--red);line-height:.92;}
+.timeup-quote{font-size:14px;color:var(--muted);font-style:italic;max-width:300px;line-height:1.6;padding:12px 16px;background:rgba(255,68,68,.06);border-radius:12px;border:1px solid rgba(255,68,68,.15);}
+.continue-btn{width:100%;max-width:340px;padding:13px;border-radius:12px;border:1px solid var(--orange);background:transparent;color:var(--orange);font-family:var(--fd);font-size:15px;letter-spacing:2px;cursor:pointer;}
+
+/* Photo */
+#s-photo{align-items:center;justify-content:center;padding:20px 16px;gap:14px;}
+.photo-title{font-family:var(--fd);font-size:28px;letter-spacing:3px;color:var(--gold);text-align:center;}
+.photo-sub{font-size:14px;color:var(--muted);text-align:center;line-height:1.6;}
+#video-preview{width:100%;max-width:340px;border-radius:14px;display:none;}
+.capture-btn{width:72px;height:72px;border-radius:50%;border:4px solid #fff;background:rgba(255,255,255,.15);font-size:28px;cursor:pointer;display:none;align-items:center;justify-content:center;}
+.capture-btn.visible{display:flex;}
+.capture-btn:active{transform:scale(.9);}
+#canvas-preview{border-radius:14px;max-width:100%;display:none;}
+.camera-btn{width:100%;max-width:340px;padding:14px;border-radius:13px;border:none;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;font-family:var(--fd);font-size:18px;letter-spacing:3px;cursor:pointer;}
+.share-btn{width:100%;max-width:340px;padding:13px;border-radius:12px;border:none;background:linear-gradient(135deg,var(--green),#007a42);color:#fff;font-family:var(--fd);font-size:17px;letter-spacing:3px;cursor:pointer;display:none;}
+.share-btn.visible{display:block;}
+.back-btn{background:transparent;border:1px solid var(--border);color:var(--muted);font-size:14px;padding:7px 18px;border-radius:8px;cursor:pointer;font-family:var(--fb);}
+
+::-webkit-scrollbar{width:3px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+</style>
+<!-- CORRECTION : jsQR n'est plus chargé au démarrage — il est chargé à la demande dans startScanner() -->
+</head>
+<body>
+<div id="root">
+
+<!-- LOADING (CORRECTION : gestion d'erreur réseau visible + bouton réessayer) -->
+<div id="s-loading" class="screen active">
+  <span class="load-ice">🧊</span>
+  <div class="load-txt" id="load-txt">CHARGEMENT<span class="load-dots"></span></div>
+  <div class="load-error" id="load-error"></div>
+  <button class="retry-btn" id="retry-btn" onclick="retryInit()">↻ RÉESSAYER</button>
+</div>
+
+<!-- MISSION SELECT -->
+<div id="s-missions" class="screen">
+  <div class="ms-header">
+    <img class="ms-logo" id="ms-logo" src="" alt="Logo de la mission">
+    <span class="ms-brand">SMART ESCAPE GAME</span>
+    <div class="ms-sub">Sélectionnez votre mission</div>
+  </div>
+  <button class="tuto-btn" onclick="showTuto()">
+    <div class="tuto-icon">📖</div>
+    <div class="tuto-line"><span class="tuto-text">TUTORIEL</span><span class="tuto-dash"> — </span><span class="tuto-sub">Comment jouer ?</span></div>
+  </button>
+  <div class="missions-grid" id="missions-grid">
+    <div style="text-align:center;padding:40px;color:var(--muted);font-size:13px">Chargement des missions...</div>
+  </div>
+</div>
+
+<!-- CORRECTION : overlay de reprise de partie (persistance localStorage) -->
+<div class="overlay" id="resume-overlay" style="z-index:260">
+  <div style="font-size:52px">🧊</div>
+  <div style="font-family:var(--fd);font-size:32px;letter-spacing:3px;color:var(--gold)">PARTIE EN COURS</div>
+  <div style="font-size:14px;color:var(--muted);max-width:300px;line-height:1.7" id="resume-info">Une partie interrompue a été retrouvée.</div>
+  <button onclick="doResume()" style="padding:14px 40px;border-radius:13px;border:none;background:linear-gradient(135deg,var(--green),#007a42);color:#fff;font-family:var(--fd);font-size:20px;letter-spacing:3px;cursor:pointer">▶ REPRENDRE</button>
+  <button onclick="declineResume()" style="background:transparent;border:1px solid var(--border);color:var(--muted);padding:10px 24px;border-radius:8px;cursor:pointer;font-family:var(--fb);font-size:14px">Abandonner et recommencer</button>
+</div>
+
+<!-- TUTORIEL -->
+<div class="tuto-overlay" id="tuto-overlay">
+  <div class="tuto-box">
+    <div class="tuto-box-title">📖 TUTORIEL</div>
+    <div class="tuto-steps">
+      <div class="tuto-step"><div class="tuto-step-num">1</div><div>Repérez le nom de votre mission sur la glacière réservée</div></div>
+      <div class="tuto-step"><div class="tuto-step-num">2</div><div>Sélectionnez la mission correspondante</div></div>
+      <div class="tuto-step"><div class="tuto-step-num">3</div><div>Choisissez le nombre de joueurs et lancez l'aventure !</div></div>
+      <div class="tuto-step"><div class="tuto-step-num">4</div><div>Utilisez les boutons 💡 🔧 🔊 🎤 📷 🔍 pendant la partie</div></div>
+      <div class="tuto-step"><div class="tuto-step-num">5</div><div>Attention ! Chaque indice peut vous coûter des minutes ⏱</div></div>
+    </div>
+    <button class="tuto-close" onclick="closeTuto()">C'EST COMPRIS ! 🎯</button>
+  </div>
+</div>
+
+<!-- BRIEFING -->
+<div id="s-briefing" class="screen">
+  <div class="brief-box">
+    <img class="brief-logo" id="brief-logo" src="" alt="Logo de la mission">
+    <div class="brief-title" id="brief-title">🧊 MISSION</div>
+    <div class="brief-text" id="brief-text"></div>
+    <button class="brief-start" onclick="goSetup()">🔐 ACCEPTER LA MISSION</button>
+    <button class="brief-skip" onclick="goSetup()">Passer le briefing</button>
+  </div>
+</div>
+
+<!-- SETUP -->
+<div id="s-setup" class="screen">
+  <div class="brand">
+    <img class="brand-logo" id="brand-logo" src="" alt="Logo de la mission">
+    <span class="brand-ice" id="setup-ice">🧊</span>
+    <div class="brand-name" id="brand-name">MISSION<br>APÉRO</div>
+    <div class="brand-mission" id="brand-mission"></div>
+  </div>
+  <div class="setup-box">
+    <div>
+      <span class="field-label">👥 Nombre de joueurs</span>
+      <div class="stepper">
+        <button class="step-btn" onclick="adj(-1)" aria-label="Un joueur de moins">−</button>
+        <div class="step-val" id="pcount">4</div>
+        <button class="step-btn" onclick="adj(1)" aria-label="Un joueur de plus">+</button>
+      </div>
+      <div class="step-max">Maximum 7 joueurs</div>
+    </div>
+    <button class="brief-btn" id="read-brief-btn" onclick="showScreen('s-briefing')" style="display:none">📖 Lire le briefing</button>
+    <button class="launch-btn" onclick="startGame()">🔐 LANCER LA MISSION</button>
+  </div>
+</div>
+
+<!-- GAME -->
+<div id="s-game" class="screen">
+  <div class="topbar">
+    <div id="topbar-lock-wrap">
+      <img class="topbar-logo" id="topbar-logo" src="" alt="Logo" style="display:none;">
+      <div class="topbar-lock" id="topbar-lock" style="display:block;font-size:32px;">🔒</div>
+    </div>
+    <div class="topbar-center">
+      <div class="topbar-indices">
+        <!-- CORRECTION : compteur initialisé à 0 (plus de ∞ déroutant) -->
+        <span id="topbar-ic-count" style="font-family:var(--fd);font-size:16px;color:var(--gold)">0</span>
+        <span style="font-size:10px;color:var(--muted)">indice(s)</span>
+        <span class="topbar-pen" id="topbar-pen">— <span id="topbar-pen-val">2</span> min/indice</span>
+      </div>
+    </div>
+    <div class="players-chip" id="players-chip">4 🧑</div>
+  </div>
+  <div class="heat-bar"><div class="heat-fill" id="heat-fill"></div></div>
+  <div class="heat-label" id="heat-label">❄️🔥 LA GLACIÈRE SE RÉCHAUFFE ! Plus que 10 min !</div>
+
+  <div class="game-body">
+    <div class="timer-box">
+      <div class="timer-rect"><div class="timer" id="timer">60:00</div></div>
+      <div class="timer-sub" id="timer-sub">prêt — appuyez sur ▶ pour démarrer</div>
+    </div>
+
+    <div class="crown">
+      <div class="crown-item cr-pos-5" id="crown-item-machine">
+        <div class="cr-label mecanisme">MACHINE</div>
+        <button class="action-btn mecanisme" onclick="openPanel('mecanisme')" aria-label="Ouvrir les outils machine"><span class="action-emoji">⚙️</span></button>
+      </div>
+      <div class="crown-item cr-pos-1" id="crown-item-morse">
+        <div class="cr-label code">MORSE</div>
+        <button class="action-btn code" onclick="openPanel('code')" aria-label="Écouter le son morse"><span class="action-emoji" id="code-btn-emoji">🔊</span></button>
+      </div>
+      <div class="crown-item cr-pos-2" id="crown-item-micro">
+        <div class="cr-label micro">MICRO</div>
+        <button class="action-btn micro" onclick="openPanel('micro')" aria-label="Ouvrir le micro"><span class="action-emoji">🎤</span></button>
+      </div>
+      <div class="crown-item cr-pos-3" id="crown-item-revoir">
+        <div class="cr-label eye">REVOIR</div>
+        <button class="action-btn eye" onclick="showLastHint()" aria-label="Revoir le dernier indice"><span class="action-emoji">👁️</span></button>
+      </div>
+      <div class="crown-item cr-pos-4" id="crown-item-boussole">
+        <div class="cr-label loupe">BOUSSOLE</div>
+        <button class="action-btn loupe" onclick="requestAccessCode('boussole')" aria-label="Ouvrir la boussole"><span class="action-emoji">🧭</span></button>
+      </div>
+      <div class="crown-item cr-pos-0" id="crown-pause-item">
+        <div class="cr-label" id="crown-toggle-label">DÉMARRER</div>
+        <button class="action-btn pause" id="crown-toggle" onclick="toggleTimer()" aria-label="Démarrer ou mettre en pause le chronomètre"><span class="action-emoji" id="crown-toggle-emoji">▶️</span></button>
+      </div>
+      <div class="crown-center" id="crown-item-indice">
+        <div class="cr-label indice">INDICE</div>
+        <button class="action-btn indice" onclick="openPanel('indice')" aria-label="Demander un indice"><span class="action-emoji">💡</span></button>
+      </div>
+    </div>
+  </div>
+
+  <div class="bottom-bar" style="padding:8px 14px 16px;">
+    <button class="victory-btn" style="flex:1" onclick="confirmVictory()">🏆 MISSION ACCOMPLIE !</button>
+  </div>
+
+  <div class="penalty-toast" id="penalty-toast">−2 min ⏱</div>
+
+  <!-- PAUSE (CORRECTION : cet écran est maintenant réellement affiché quand on met en pause,
+       le fond pause_bg_url configuré par mission est donc de nouveau visible) -->
+  <div class="overlay" id="pause-overlay">
+    <div style="font-size:52px">⏸</div>
+    <div style="font-family:var(--fd);font-size:44px;letter-spacing:4px;color:#fff">PAUSE</div>
+    <div style="font-size:13px;color:var(--muted)">Le timer est suspendu</div>
+    <button onclick="closePauseScreen()" style="padding:14px 42px;border-radius:13px;border:none;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;font-family:var(--fd);font-size:21px;letter-spacing:3px;cursor:pointer">▶ REPRENDRE</button>
+  </div>
+
+  <!-- VICTORY CONFIRM -->
+  <div class="overlay" id="victory-confirm">
+    <div style="font-size:56px">🏆</div>
+    <div style="font-family:var(--fd);font-size:33px;letter-spacing:3px;color:var(--gold)">MISSION ACCOMPLIE ?</div>
+    <div style="font-size:14px;color:var(--muted);max-width:280px;line-height:1.6">Confirmez que vous avez résolu toutes les énigmes !</div>
+    <button onclick="endVictory()" style="padding:13px 38px;border-radius:12px;border:none;background:linear-gradient(135deg,var(--green),#007a42);color:#fff;font-family:var(--fd);font-size:19px;letter-spacing:3px;cursor:pointer">OUI, ON A GAGNÉ ! 🎉</button>
+    <button onclick="closeVC()" style="background:transparent;border:1px solid var(--border);color:var(--muted);padding:9px 22px;border-radius:8px;cursor:pointer;font-family:var(--fb);font-size:14px">Pas encore...</button>
+  </div>
+</div>
+
+<!-- PANEL CODE D'ACCÈS (verrou boussole/labyrinthe) -->
+<div class="panel-overlay" id="panel-gate">
+  <div class="panel">
+    <div class="panel-header">
+      <div class="panel-title" id="gate-title" style="color:#00d4ff">🔒 CODE D'ACCÈS</div>
+      <button class="panel-close" onclick="closeGate()">Fermer</button>
+    </div>
+    <div style="font-size:13px;color:var(--muted);margin-bottom:6px;text-align:center">Entrez le code pour déverrouiller cet outil.</div>
+    <div class="numdisp"><div class="numdisp-val" id="nd-gate">—</div><div class="numdisp-cursor"></div></div>
+    <div class="numpad">
+      <button class="npbtn" onclick="np('gate','1')">1</button><button class="npbtn" onclick="np('gate','2')">2</button><button class="npbtn" onclick="np('gate','3')">3</button>
+      <button class="npbtn" onclick="np('gate','4')">4</button><button class="npbtn" onclick="np('gate','5')">5</button><button class="npbtn" onclick="np('gate','6')">6</button>
+      <button class="npbtn" onclick="np('gate','7')">7</button><button class="npbtn" onclick="np('gate','8')">8</button><button class="npbtn" onclick="np('gate','9')">9</button>
+      <button class="npbtn del" onclick="npDel('gate')" aria-label="Effacer">⌫</button><button class="npbtn" onclick="np('gate','0')">0</button><button class="npbtn go" onclick="submitGateCode()">OK ✓</button>
+    </div>
+    <div id="gate-error" class="hint-error" style="display:none">❌ Code incorrect, réessayez.</div>
+  </div>
+</div>
+
+<!-- PANEL INDICE -->
+<div class="panel-overlay" id="panel-indice">
+  <div class="panel">
+    <div class="panel-fixed-top">
+      <div class="panel-header">
+        <div class="panel-title" style="color:var(--gold)">💡 INDICE</div>
+        <button class="panel-close" onclick="closePanel('indice')">Fermer</button>
+      </div>
+      <div class="numdisp"><div class="numdisp-val" id="nd-indice">—</div><div class="numdisp-cursor"></div></div>
+      <div class="numpad">
+        <button class="npbtn" onclick="np('indice','1')">1</button><button class="npbtn" onclick="np('indice','2')">2</button><button class="npbtn" onclick="np('indice','3')">3</button>
+        <button class="npbtn" onclick="np('indice','4')">4</button><button class="npbtn" onclick="np('indice','5')">5</button><button class="npbtn" onclick="np('indice','6')">6</button>
+        <button class="npbtn" onclick="np('indice','7')">7</button><button class="npbtn" onclick="np('indice','8')">8</button><button class="npbtn" onclick="np('indice','9')">9</button>
+        <button class="npbtn del" onclick="npDel('indice')" aria-label="Effacer">⌫</button><button class="npbtn" onclick="np('indice','0')">0</button><button class="npbtn go" onclick="searchHint()">OK ✓</button>
+      </div>
+    </div>
+    <div class="hint-result" id="hint-result">
+      <div class="hint-header"><div class="hint-badge" id="hint-badge">CARTE N°—</div><div class="penalty-badge" id="hint-penalty">−2 min</div></div>
+      <div class="hint-img-wrap" id="hint-img-wrap">
+        <div class="hint-ph" id="hint-ph"><span style="font-size:36px;display:block;margin-bottom:8px">🔍</span>Indice non configuré</div>
+        <img id="hint-img" src="" alt="Indice" style="display:none">
+      </div>
+      <div class="hint-caption" id="hint-caption" style="display:none"></div>
+      <button class="hint-answer-btn" id="hint-answer-btn" onclick="showAnswer()">🔓 VOIR LA RÉPONSE</button>
+    </div>
+    <div class="hint-error" id="hint-error"></div>
+    <div class="jc-message" id="jc-message"></div>
+    <div class="history-mini" id="history-mini" style="display:none">
+      <span class="section-label">Déjà consultés</span>
+      <div id="history-list"></div>
+    </div>
+  </div>
+</div>
+
+<!-- PANEL MÉCANISME -->
+<div class="panel-overlay" id="panel-mecanisme">
+  <div class="panel">
+    <div class="panel-header"><div class="panel-title" style="color:#00d4ff">⚙️ MACHINE</div><button class="panel-close" onclick="closePanel('mecanisme')">Fermer</button></div>
+    <div style="font-size:14px;color:var(--muted);margin-bottom:12px;line-height:1.6">Choisissez l'outil correspondant à votre carte rouage ⚙️</div>
+    <div class="meca-grid" style="grid-template-columns:repeat(3,1fr)">
+      <button class="meca-btn" id="meca-btn-gyroscope" onclick="requestAccessCode('gyroscope')"><span class="meca-emoji">🕹️</span><div class="meca-label">JEU</div></button>
+      <button class="meca-btn" id="meca-btn-scanner" onclick="showMeca('scanner')"><span class="meca-emoji">📷</span><div class="meca-label">LECTEUR QR</div></button>
+      <button class="meca-btn" id="meca-btn-loupe" onclick="closePanel('mecanisme');openPanel('loupe')"><span class="meca-emoji">🔍</span><div class="meca-label">LOUPE</div></button>
+    </div>
+    <div id="meca-gyroscope" style="display:none">
+      <div style="font-size:12px;color:var(--muted);text-align:center;margin-bottom:8px">Inclinez le téléphone pour guider la bille jusqu'à la case dorée 🎯</div>
+      <div class="maze-wrap" style="width:100%;display:flex;justify-content:center;margin:0 auto;position:relative">
+        <canvas id="maze-canvas" width="290" height="480" style="max-width:100%;max-height:48vh;width:auto;height:auto;display:block;border-radius:12px;background:#0a0a1a;box-shadow:0 0 0 2px rgba(0,212,255,.25)"></canvas>
+        <div class="scanner-result" id="maze-result">
+          <button onclick="closeMazeResult()" style="position:absolute;top:10px;left:10px;padding:8px 16px;border-radius:10px;border:none;background:rgba(0,0,0,.6);color:#fff;font-family:var(--fb);font-size:13px;cursor:pointer;z-index:2">← Retour</button>
+          <div id="maze-result-content" style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;"></div>
+        </div>
+      </div>
+      <div class="gyro-val" id="gyro-val">Basculez le téléphone doucement…</div>
+      <button id="maze-reset-btn" onclick="resetMaze()" style="width:100%;padding:10px;border-radius:12px;border:1px solid var(--border);background:transparent;color:var(--muted);font-family:var(--fb);font-size:13px;cursor:pointer;margin-top:8px">↺ Recommencer le labyrinthe</button>
+    </div>
+    <div id="meca-scanner" style="display:none">
+      <div class="scanner-wrap">
+        <video id="scanner-video" autoplay playsinline></video>
+        <div class="scanner-frame"><div class="scanner-corner sc-tl"></div><div class="scanner-corner sc-tr"></div><div class="scanner-corner sc-bl"></div><div class="scanner-corner sc-br"></div><div class="scanner-line"></div></div>
+        <div class="scanner-ph" id="scanner-ph">📷 Appuyez sur le bouton pour activer la caméra</div>
+      </div>
+      <button class="scanner-start-btn" id="scanner-btn" onclick="startScanner()">📷 ACTIVER LE LECTEUR QR</button>
+      <div class="scanner-result" id="scanner-result"></div>
+      <div class="privacy-note">🔒 L'image de la caméra est analysée uniquement sur votre téléphone — rien n'est enregistré ni envoyé.</div>
+    </div>
+  </div>
+</div>
+
+<!-- PANEL BOUSSOLE (défi : viser une direction et rester stable) -->
+<div class="panel-overlay" id="panel-boussole">
+  <div class="panel">
+    <div class="panel-header"><div class="panel-title" style="color:#00d4ff">🧭 BOUSSOLE</div><button class="panel-close" onclick="closePanel('boussole')">Fermer</button></div>
+    <div style="font-size:13px;color:var(--muted);margin-bottom:10px;line-height:1.6">Orientez le téléphone dans la direction indiquée sur votre carte, et restez stable.</div>
+    <div class="compass-wrap">
+      <div class="compass-letters"><div class="c-n">N</div><div class="c-s">S</div><div class="c-e">E</div><div class="c-w">O</div></div>
+      <div class="compass-needle" id="boussole-needle"></div>
+      <div><div class="compass-deg" id="boussole-deg">0°</div><div class="compass-dir" id="boussole-dir-label">—</div></div>
+    </div>
+    <div style="margin-top:16px">
+      <div class="hold-progress-bar"><div class="hold-progress-fill" id="boussole-progress"></div></div>
+      <div class="gyro-val" id="boussole-status">Orientez-vous…</div>
+    </div>
+    <div class="scanner-result" id="boussole-result"></div>
+  </div>
+</div>
+
+<!-- PANEL CODE MORSE -->
+<div class="panel-overlay" id="panel-code">
+  <div class="panel">
+    <div class="panel-header"><div class="panel-title" style="color:var(--green)">🔊 SON MORSE</div><button class="panel-close" onclick="closePanel('code')">Fermer</button></div>
+    <div style="font-size:14px;color:var(--muted);margin-bottom:12px;line-height:1.6">Écoutez le son morse et décodez le message avec votre feuille de traduction !</div>
+    <div class="morse-player">
+      <span class="morse-icon">🔊</span>
+      <div class="morse-title">SON MORSE</div>
+      <audio id="morse-audio" style="display:none"></audio>
+      <button class="morse-play-btn" id="morse-play-btn" onclick="playMorse()">▶ ÉCOUTER LE MORSE</button>
+      <div class="morse-playing" id="morse-playing">🔴 EN LECTURE...</div>
+      <div id="morse-nofile" style="display:none;font-size:12px;color:var(--muted);margin-top:8px">Aucun son morse configuré pour cette mission</div>
+    </div>
+  </div>
+</div>
+
+<!-- PANEL MICRO (CORRECTION : repli clavier pour navigateurs sans reconnaissance vocale) -->
+<div class="panel-overlay" id="panel-micro">
+  <div class="panel">
+    <div class="panel-header"><div class="panel-title" style="color:var(--red)">🎤 MICRO</div><button class="panel-close" onclick="closePanel('micro')">Fermer</button></div>
+    <div style="font-size:14px;color:var(--muted);margin-bottom:8px;line-height:1.6">Trouvez le mot de passe sur votre carte et prononcez-le à voix haute !</div>
+    <div class="micro-wave" id="micro-wave">🎤</div>
+    <div class="micro-status" id="micro-status">APPUYEZ POUR PARLER</div>
+    <button onclick="toggleMicro()" id="micro-btn" style="width:100%;padding:12px;border-radius:12px;border:none;background:linear-gradient(135deg,var(--red),#aa0000);color:#fff;font-family:var(--fd);font-size:18px;letter-spacing:3px;cursor:pointer;margin-top:12px">🎤 PARLER</button>
+    <div class="micro-alt-label" id="micro-alt-label">— ou saisissez le mot de passe —</div>
+    <div class="micro-text-row">
+      <input id="micro-text" type="text" placeholder="Mot de passe…" autocomplete="off" autocapitalize="off" aria-label="Saisir le mot de passe">
+      <button onclick="validateMicroText()">VALIDER</button>
+    </div>
+    <div class="micro-result" id="micro-result"></div>
+    <div id="micro-code-reveal" style="display:none;margin-top:12px;text-align:center;padding:14px;border-radius:12px;background:rgba(0,230,118,.1);border:1px solid rgba(0,230,118,.3);">
+      <div style="font-size:10px;letter-spacing:3px;color:var(--green);margin-bottom:6px">MOT VALIDÉ — VOTRE CODE :</div>
+      <div id="micro-code-val" style="font-family:var(--fd);font-size:48px;letter-spacing:8px;color:var(--green)">—</div>
+    </div>
+    <div class="privacy-note">🔒 La reconnaissance vocale est assurée par votre navigateur. Rien n'est conservé par l'application.</div>
+  </div>
+</div>
+
+<!-- PANEL LOUPE (CORRECTION : navigation manuelle entre les loupes + traitement vidéo allégé) -->
+<div class="panel-overlay" id="panel-loupe">
+  <div class="panel">
+    <div class="panel-header"><div class="panel-title" style="color:#00d4ff">🔍 LOUPE</div><button class="panel-close" onclick="closePanel('loupe')">Fermer</button></div>
+    <div class="loupe-nav" id="loupe-nav">
+      <button onclick="loupeNav(-1)" aria-label="Loupe précédente">‹</button>
+      <div class="loupe-step-badge" id="loupe-step-badge">LOUPE 1 / 3</div>
+      <button onclick="loupeNav(1)" aria-label="Loupe suivante">›</button>
+    </div>
+    <div style="font-size:14px;color:var(--muted);margin-bottom:8px;line-height:1.6">Pointez la caméra vers la carte indiquée — le filtre révèle les informations cachées !</div>
+    <div class="loupe-filter-wrap">
+      <video id="loupe-video" autoplay playsinline style="display:none;width:100%;"></video>
+      <canvas id="loupe-canvas" style="display:none;width:100%;border-radius:14px;"></canvas>
+      <div class="loupe-ph" id="loupe-ph">🔍 Activez la loupe pour révéler les secrets</div>
+    </div>
+    <button class="loupe-start-btn" id="loupe-start-btn" onclick="startLoupe()">🔍 ACTIVER LA LOUPE</button>
+    <button class="loupe-stop-btn" id="loupe-stop-btn" onclick="stopLoupe()">⏹ ARRÊTER</button>
+    <div class="loupe-zoom" id="loupe-zoom">
+      <div class="loupe-zoom-row"><span>🔍 ZOOM</span><span id="loupe-zoom-val">1.0×</span></div>
+      <input type="range" id="loupe-zoom-range" min="1" max="4" step="0.1" value="1" oninput="onLoupeZoom(this.value)" aria-label="Niveau de zoom">
+      <div class="loupe-zoom-hint" id="loupe-zoom-hint"></div>
+    </div>
+    <div class="loupe-info" id="loupe-info">Filtre actif — tenez la carte bien en face de la caméra</div>
+    <div class="privacy-note">🔒 L'image de la caméra est traitée uniquement sur votre téléphone — rien n'est enregistré ni envoyé.</div>
+  </div>
+</div>
+
+<!-- VICTORY -->
+<div id="s-victory" class="screen">
+  <div class="confetti-container" id="confetti"></div>
+  <div class="victory-emoji">🎉</div>
+  <div class="victory-title">MISSION<br>ACCOMPLIE !</div>
+  <div class="victory-quote" id="victory-quote"></div>
+  <div class="stats-box">
+    <div class="stat-row"><span class="stat-label">Joueurs</span><span class="stat-val" id="v-players">—</span></div>
+    <div class="stat-row"><span class="stat-label">Temps réalisé</span><span class="stat-val" id="v-time">—</span></div>
+    <div class="stat-row"><span class="stat-label">Indices consultés</span><span class="stat-val" id="v-hints">—</span></div>
+    <div class="stat-row"><span class="stat-label">Temps perdu</span><span class="stat-val" id="v-penalty">—</span></div>
+  </div>
+  <button class="souvenir-btn" onclick="goPhoto()">📸 MON SOUVENIR</button>
+  <button class="restart-btn" onclick="resetGame()">🔄 Nouvelle partie</button>
+</div>
+
+<!-- TIMEUP (CORRECTION : citation personnalisable par mission via citation_defaite) -->
+<div id="s-timeup" class="screen">
+  <div class="timeup-emoji">⏰</div>
+  <div class="timeup-title">TEMPS<br>ÉCOULÉ !</div>
+  <div class="timeup-quote" id="timeup-quote">"Oublie que t'as aucune chance, vas-y, fonce !!" 🎿</div>
+  <div class="stats-box">
+    <div class="stat-row"><span class="stat-label">Joueurs</span><span class="stat-val" id="tu-players">—</span></div>
+    <div class="stat-row"><span class="stat-label">Indices consultés</span><span class="stat-val" id="tu-hints">—</span></div>
+    <div class="stat-row"><span class="stat-label">Temps perdu</span><span class="stat-val" id="tu-penalty">—</span></div>
+  </div>
+  <button class="continue-btn" onclick="continueGame()">💪 CONTINUER QUAND MÊME</button>
+  <button class="restart-btn" onclick="resetGame()">🔄 Nouvelle partie</button>
+</div>
+
+<!-- PHOTO -->
+<div id="s-photo" class="screen">
+  <div class="photo-title">📸 TON SOUVENIR</div>
+  <div class="photo-sub" id="photo-sub">Prenez votre selfie et partagez votre victoire !</div>
+  <video id="video-preview" autoplay playsinline></video>
+  <button class="capture-btn" id="capture-btn" onclick="capturePhoto()" aria-label="Prendre la photo">📸</button>
+  <canvas id="canvas-preview"></canvas>
+  <button class="camera-btn" id="open-camera-btn" onclick="openCamera()">📷 OUVRIR LA CAMÉRA SELFIE</button>
+  <button class="share-btn" id="share-btn" onclick="sharePhoto()">🚀 PARTAGER SUR LES RÉSEAUX</button>
+  <button class="back-btn" onclick="showScreen('s-victory')">← Retour</button>
+  <div class="privacy-note">🔒 La photo reste sur votre téléphone tant que vous ne la partagez pas.</div>
+</div>
+
+</div>
+
+<script>
+// ══════════════════════════════════════════
+// Configuration Supabase (clé "publishable" : publique par conception,
+// la protection des données doit se faire côté serveur via RLS — voir README)
+const SUPABASE_URL = 'https://krqkqcnsmcmerwbfencb.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_2TzK9VfplPjCRi_WhPj4nA_BooLFTQs';
+const SAVE_KEY = 'missionApero.save.v1';   // clé localStorage de sauvegarde de partie
+const SAVE_MAX_AGE_MS = 12*3600*1000;      // une sauvegarde de plus de 12h est ignorée
+// ══════════════════════════════════════════
+
+// ── CORRECTION anti-XSS : tout texte venant de la base ou d'un QR code passe par esc(),
+//    toute URL utilisée dans du HTML/CSS passe par safeUrl() ──
+function esc(s){
+  return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function safeUrl(u){
+  u=String(u||'').trim();
+  if(!/^https?:\/\//i.test(u)) return '';
+  return u.replace(/["'()\\ ]/g, encodeURIComponent);
+}
+function showToast(msg){
+  const t=document.getElementById('penalty-toast');
+  t.textContent=msg;
+  t.classList.add('show');
+  clearTimeout(showToast._t);
+  showToast._t=setTimeout(()=>t.classList.remove('show'),2200);
+}
+
+// ── État global ──
+// NOTE audit : le champ base `actif` filtre les missions retournées par l'API,
+// le champ `active` (=false) affiche une mission grisée "bientôt disponible".
+// Deux noms quasi identiques pour deux rôles différents : à renommer côté base
+// (ex: `publie` / `jouable`) dès que possible — voir README.
+let glaciere=null, cartes={};
+let players=4, durMin=60;
+let remainMs=60*60000, usedMs=0, lastNow=0;     // CORRECTION : chrono basé sur horodatages
+let timerInt=null, paused=false, started=false, freeMode=false, warmingShown=false;
+let lastBipSec=null, lastSavedSec=null;
+let npVals={indice:'',code:'',gate:''};
+let history=[], penaltyMin=2, penaltyActive=true, totalPen=0;
+let bgMusic=null, bipAudio=null, audioCtx=null;
+let currentCardNum=null, photoDataUrl=null;
+let gyroActive=false, microActive=false;
+let scannerStream=null, loupeStream=null, loupeAnimFrame=null;
+let loupeTrack=null, loupeZoomNative=false, loupeDigital=1;
+let recognition=null;
+let allGlacieres=[];
+let loupeStep=0, loupeConfigs=[];
+let wakeLock=null, pendingResume=null;
+
+function getSecsLeft(){return Math.max(0,Math.ceil(remainMs/1000));}
+function getSecsUsed(){return Math.floor(usedMs/1000);}
+
+// ── Wake Lock : empêche la mise en veille de l'écran pendant la partie ──
+async function acquireWakeLock(){
+  try{
+    if('wakeLock' in navigator){wakeLock=await navigator.wakeLock.request('screen');}
+  }catch(_){/* non supporté ou refusé : le chrono horodaté compense de toute façon */}
+}
+function releaseWakeLock(){
+  try{if(wakeLock){wakeLock.release();wakeLock=null;}}catch(_){}
+}
+
+// ── Persistance de partie (CORRECTION : plus de perte au rafraîchissement) ──
+function saveState(){
+  if(!glaciere)return;
+  try{
+    localStorage.setItem(SAVE_KEY,JSON.stringify({
+      gid:glaciere.id,players,durMin,remainMs,usedMs,totalPen,
+      history,loupeStep,warmingShown,started,freeMode,ts:Date.now()
+    }));
+  }catch(_){}
+}
+function clearSave(){try{localStorage.removeItem(SAVE_KEY);}catch(_){}}
+
+function checkResume(gs){
+  try{
+    const raw=localStorage.getItem(SAVE_KEY);
+    if(!raw)return false;
+    const s=JSON.parse(raw);
+    if(!s||!s.gid||typeof s.remainMs!=='number')return false;
+    if(Date.now()-(s.ts||0)>SAVE_MAX_AGE_MS){clearSave();return false;}
+    const g=gs.find(x=>x.id===s.gid);
+    if(!g){clearSave();return false;}
+    pendingResume={g,s};
+    const secs=Math.max(0,Math.ceil(s.remainMs/1000));
+    const m=Math.floor(secs/60).toString().padStart(2,'0');
+    const sec=(secs%60).toString().padStart(2,'0');
+    document.getElementById('resume-info').textContent=
+      'Mission « '+(g.nom_escape||'Mission Apéro')+' » — '+
+      (s.freeMode?'mode libre':(m+':'+sec+' restant'))+
+      ', '+(s.history?s.history.length:0)+' indice(s) consulté(s).';
+    document.getElementById('resume-overlay').classList.add('show');
+    return true;
+  }catch(_){return false;}
+}
+async function doResume(){
+  if(!pendingResume)return;
+  const {g,s}=pendingResume;pendingResume=null;
+  document.getElementById('resume-overlay').classList.remove('show');
+  await loadGlaciere(g);
+  players=s.players||4;durMin=s.durMin||durMin;
+  remainMs=s.remainMs;usedMs=s.usedMs||0;totalPen=s.totalPen||0;
+  history=Array.isArray(s.history)?s.history:[];
+  loupeStep=s.loupeStep||0;warmingShown=!!s.warmingShown;freeMode=!!s.freeMode;
+  started=true;paused=true;    // reprise volontaire : le groupe relance via ▶
+  document.getElementById('players-chip').textContent=players+' 🧑';
+  document.getElementById('topbar-ic-count').textContent=history.length;
+  renderHistory();
+  showScreen('s-game');
+  if(freeMode)applyFreeModeUI();
+  updateTimer();updateHeat();updateTimerControls();
+  clearInterval(timerInt);lastNow=Date.now();timerInt=setInterval(tick,250);
+}
+function declineResume(){
+  clearSave();pendingResume=null;
+  document.getElementById('resume-overlay').classList.remove('show');
+  proceedInit();
+}
+
+async function supaFetch(path,opts={}){
+  const r=await fetch(SUPABASE_URL+'/rest/v1/'+path,{
+    headers:{'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY,'Content-Type':'application/json',...opts.headers},
+    ...opts
+  });
+  if(!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+// ── INIT (CORRECTION : erreur réseau affichée + bouton réessayer,
+//          plus de bascule silencieuse vers l'écran setup sans mission) ──
+async function init(){
+  try{
+    const gs=await supaFetch('glacieres?actif=eq.true&order=created_at.asc');
+    allGlacieres=gs;
+    if(!gs.length){showInitError('Aucune mission n\'est configurée pour le moment.');return;}
+    if(checkResume(gs))return;
+    proceedInit();
+  }catch(e){
+    console.error(e);
+    showInitError('Connexion au serveur impossible. Vérifiez votre réseau, puis réessayez.');
+  }
+}
+async function proceedInit(){
+  const gs=allGlacieres;
+  if(gs.length===1&&gs[0].active!==false){await loadGlaciere(gs[0]);}
+  else{renderMissions(gs);showScreen('s-missions');}
+}
+function showInitError(msg){
+  showScreen('s-loading');
+  document.getElementById('load-txt').style.display='none';
+  const err=document.getElementById('load-error');
+  err.textContent='⚠️ '+msg;
+  err.classList.add('visible');
+  document.getElementById('retry-btn').classList.add('visible');
+}
+function retryInit(){
+  document.getElementById('load-txt').style.display='block';
+  document.getElementById('load-error').classList.remove('visible');
+  document.getElementById('retry-btn').classList.remove('visible');
+  init();
+}
+
+// ── MISSIONS (CORRECTION : tous les champs base échappés, URL de fond validée) ──
+function renderMissions(gs){
+  const grid=document.getElementById('missions-grid');
+  grid.innerHTML=gs.map(g=>{
+    const isAnniv=g.nom_escape&&g.nom_escape.toLowerCase().includes('anniversaire');
+    const defaultBadge=isAnniv?'🎂 Mission Anniversaire':'🍺 Mission Apéro';
+    const badgeText=(g.badge_text&&g.badge_text.trim())?g.badge_text:defaultBadge;
+    const cornerEmoji=(g.mission_emoji&&g.mission_emoji.trim())?g.mission_emoji:(isAnniv?'🌺':'🍺');
+    const bgUrl=safeUrl(g.mission_bg_url);
+    const bg=bgUrl?`url(${bgUrl})`:(isAnniv?'linear-gradient(135deg,#cc00aa,#ff88ff)':'linear-gradient(135deg,#ff6600,#ffaa00)');
+    const locked=g.active===false;
+    return `<div class="mission-card${locked?' locked':''}" data-id="${esc(g.id)}"${locked?'':' onclick="selectMissionById(this)"'}>
+      <div class="mission-bg" style="background:${bg};background-size:cover;background-position:center"></div>
+      <div class="mission-overlay"></div>
+      <div class="mission-emoji">${esc(cornerEmoji)}</div>
+      <div class="mission-badge">${esc(badgeText)}</div>
+      ${locked?'<div class="mission-soon">🔒 Bientôt disponible</div>':''}
+      <div class="mission-content">
+        <div class="mission-title">${esc(g.nom_escape||'MISSION APÉRO')}</div>
+        <div class="mission-name">${esc(g.nom)}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function selectMissionById(el){
+  if(el.classList.contains('locked'))return;
+  selectMission(el.dataset.id);
+}
+async function selectMission(id){
+  const g=allGlacieres.find(x=>x.id===id);
+  if(!g||g.active===false) return;
+  await loadGlaciere(g);
+}
+
+async function loadGlaciere(g){
+  try{
+    glaciere=g;
+    penaltyMin=g.penalty_min||2;
+    penaltyActive=g.penalite_active!==false;
+    // CORRECTION : durée de partie configurable par mission (colonne optionnelle duree_min, défaut 60)
+    durMin=(parseInt(g.duree_min)>0)?parseInt(g.duree_min):60;
+    cartes={};
+    const cs=await supaFetch('cartes?glaciere_id=eq.'+encodeURIComponent(g.id));
+    cs.forEach(c=>cartes[c.numero]=c);
+    loupeConfigs=[
+      {filtre:g.loupe1_filtre||'contraste', url:g.loupe1_url||''},
+      {filtre:g.loupe2_filtre||'contraste', url:g.loupe2_url||''},
+      {filtre:g.loupe3_filtre||'contraste', url:g.loupe3_url||''},
+    ].filter(l=>l.url);   // NOTE : loupeX_url sert de drapeau d'activation (contenu non affiché — hérité de l'ancien code)
+    loupeStep=0;
+    applyBranding();
+    if(bgMusic){bgMusic.pause();bgMusic=null;}
+    if(g.music_url){bgMusic=new Audio(g.music_url);bgMusic.loop=true;bgMusic.volume=0.25;}
+    bipAudio=g.bip_url?new Audio(g.bip_url):null;
+    showScreen('s-setup');
+  }catch(e){
+    console.error('Erreur loadGlaciere:',e);
+    showInitError('Impossible de charger la mission. Vérifiez votre réseau, puis réessayez.');
+  }
+}
+
+function applyButtonVisibility(g){
+  const map={
+    machine:'crown-item-machine', morse:'crown-item-morse', micro:'crown-item-micro',
+    revoir:'crown-item-revoir', boussole:'crown-item-boussole', indice:'crown-item-indice'
+  };
+  Object.keys(map).forEach(k=>{
+    const el=document.getElementById(map[k]);
+    if(el) el.classList.toggle('btn-off',g['btn_'+k]===false);
+  });
+  const mecaMap={gyroscope:'meca-btn-gyroscope', scanner:'meca-btn-scanner', loupe:'meca-btn-loupe'};
+  Object.keys(mecaMap).forEach(k=>{
+    const el=document.getElementById(mecaMap[k]);
+    if(el) el.classList.toggle('btn-off',g['btn_'+k]===false);
+  });
+}
+
+function applyBranding(){
+  if(!glaciere)return;
+  applyButtonVisibility(glaciere);
+  if(glaciere.couleur_accent) document.documentElement.style.setProperty('--accent',glaciere.couleur_accent);
+  const logoUrl=safeUrl(glaciere.logo_url);
+  if(logoUrl){
+    ['brand-logo','topbar-logo','brief-logo','ms-logo'].forEach(id=>{
+      const el=document.getElementById(id);
+      if(el){el.src=logoUrl;el.style.display='block';}
+    });
+    document.getElementById('setup-ice').style.display='none';
+    document.getElementById('topbar-lock').style.display='none';
+  } else {
+    document.getElementById('topbar-lock').style.display='block';
+  }
+  const missionName=glaciere.nom_escape||'MISSION APÉRO';
+  // CORRECTION XSS : construction DOM au lieu d'innerHTML avec données base
+  const bn=document.getElementById('brand-name');
+  bn.textContent='';
+  missionName.toUpperCase().split(' ').forEach((w,i)=>{
+    if(i>0)bn.appendChild(document.createElement('br'));
+    bn.appendChild(document.createTextNode(w));
+  });
+  if(glaciere.nom){document.getElementById('brand-mission').textContent=glaciere.nom;document.getElementById('brand-mission').style.display='block';}
+  if(glaciere.synopsis){
+    document.getElementById('brief-text').textContent=glaciere.synopsis;
+    document.getElementById('brief-title').textContent=glaciere.nom_escape||'🧊 MISSION';
+    document.getElementById('read-brief-btn').style.display='block';
+  }
+  try{
+    const gameBg=safeUrl(glaciere.game_bg_url);
+    const sg=document.getElementById('s-game');
+    if(gameBg){sg.style.backgroundImage='url("'+gameBg+'")';sg.style.backgroundSize='cover';sg.style.backgroundPosition='center';}
+    else{sg.style.backgroundImage='none';}
+  }catch(e){}
+  try{
+    const pauseBg=safeUrl(glaciere.pause_bg_url);
+    const po=document.getElementById('pause-overlay');
+    if(pauseBg){po.style.backgroundImage='url("'+pauseBg+'")';po.style.backgroundSize='cover';po.style.backgroundPosition='center';}
+    else{po.style.backgroundImage='none';}
+  }catch(e){}
+  try{
+    const citation=glaciere.citation_victoire||'On sait jamais, sur un malentendu ça peut marcher !';
+    document.getElementById('victory-quote').textContent='"'+citation+'"';
+    // CORRECTION : citation de défaite personnalisable elle aussi (colonne optionnelle citation_defaite)
+    if(glaciere.citation_defaite){
+      document.getElementById('timeup-quote').textContent='"'+glaciere.citation_defaite+'"';
+    }
+  }catch(e){}
+  if(penaltyActive){
+    document.getElementById('topbar-pen').classList.add('visible');
+    document.getElementById('topbar-pen-val').textContent=penaltyMin;
+  }
+}
+
+// ── TUTORIEL ──
+function showTuto(){document.getElementById('tuto-overlay').classList.add('show');}
+function closeTuto(){document.getElementById('tuto-overlay').classList.remove('show');}
+
+// ── SETUP ──
+function adj(d){players=Math.max(2,Math.min(7,players+d));document.getElementById('pcount').textContent=players;}
+function goSetup(){showScreen('s-setup');}
+
+// ── GAME / CHRONO (CORRECTION : temps calculé sur horodatages réels — le chrono
+//    reste juste même si le téléphone se verrouille ou passe en arrière-plan) ──
+function startGame(){
+  if(!glaciere){showToast('⚠️ Aucune mission chargée — vérifiez la connexion');return;}
+  remainMs=durMin*60000;usedMs=0;totalPen=0;history=[];
+  paused=false;started=false;freeMode=false;warmingShown=false;
+  lastBipSec=null;lastSavedSec=null;
+  npVals={indice:'',code:'',gate:''};currentCardNum=null;loupeStep=0;
+  document.getElementById('players-chip').textContent=players+' 🧑';
+  document.getElementById('topbar-ic-count').textContent='0';
+  document.getElementById('heat-fill').style.width='0%';
+  renderHistory();
+  showScreen('s-game');
+  updateTimer();
+  updateTimerControls();
+  clearInterval(timerInt);
+  lastNow=Date.now();
+  timerInt=setInterval(tick,250);
+  if(bgMusic){bgMusic.currentTime=0;}
+  saveState();
+}
+
+function tick(){
+  if(!started||paused||freeMode)return;
+  const now=Date.now();
+  const dt=now-lastNow;
+  lastNow=now;
+  if(dt<=0)return;
+  remainMs-=dt;usedMs+=dt;
+  const secsLeft=getSecsLeft();
+  if(remainMs<=0){
+    remainMs=0;
+    updateTimer();updateHeat();
+    clearInterval(timerInt);
+    if(bgMusic)bgMusic.pause();
+    releaseWakeLock();
+    saveState();
+    endTimeup();
+    return;
+  }
+  // CORRECTION : <= au lieu de === (l'alerte n'est plus sautée par une pénalité)
+  if(secsLeft<=600&&!warmingShown){
+    warmingShown=true;
+    const h=document.getElementById('heat-label');
+    h.classList.add('show');
+    setTimeout(()=>h.classList.remove('show'),6000);
+    playWarmingSound();
+  }
+  if(secsLeft<=10&&secsLeft!==lastBipSec){lastBipSec=secsLeft;playBip();}
+  updateTimer();
+  updateHeat();
+  if(secsLeft!==lastSavedSec){lastSavedSec=secsLeft;saveState();}
+}
+
+function updateTimer(){
+  if(freeMode)return;
+  const secsLeft=getSecsLeft();
+  const m=Math.floor(secsLeft/60).toString().padStart(2,'0');
+  const s=(secsLeft%60).toString().padStart(2,'0');
+  const el=document.getElementById('timer');
+  el.textContent=m+':'+s;
+  el.className='timer';
+  const pct=secsLeft/(durMin*60);
+  if(pct<.1)el.classList.add('danger');
+  else if(pct<.25)el.classList.add('warn');
+}
+
+function updateTimerControls(){
+  const running=started&&!paused;
+  const emo=document.getElementById('crown-toggle-emoji');
+  const lab=document.getElementById('crown-toggle-label');
+  const item=document.getElementById('crown-pause-item');
+  if(emo) emo.textContent=running?'⏸️':'▶️';
+  if(lab) lab.textContent=running?'PAUSE':(started?'REPRENDRE':'DÉMARRER');
+  if(item) item.classList.toggle('running',running);
+  const sub=document.getElementById('timer-sub');
+  if(sub) sub.textContent=!started?'prêt — appuyez sur ▶ pour démarrer':(paused?'⏸ en pause':'en cours');
+}
+
+// Bouton de la couronne : 1er appui = lance ; ensuite = pause (avec écran) / reprise
+function toggleTimer(){
+  if(freeMode)return;
+  if(!started){
+    if(!glaciere){showToast('⚠️ Aucune mission chargée');return;}
+    started=true;paused=false;lastNow=Date.now();
+    acquireWakeLock();
+    if(bgMusic)bgMusic.play().catch(()=>{});
+    updateTimer();updateTimerControls();saveState();
+    return;
+  }
+  if(!paused){openPauseScreen();}
+  else{closePauseScreen();}
+}
+
+function updateHeat(){
+  const elapsed=Math.min(1,usedMs/(durMin*60000));
+  document.getElementById('heat-fill').style.width=(elapsed*100)+'%';
+}
+
+function applyPenalty(min){
+  if(!penaltyActive||!min)return;
+  remainMs=Math.max(0,remainMs-min*60000);
+  totalPen+=min;
+  updateTimer();
+  showToast('−'+min+' min ⏱');
+  saveState();
+}
+
+// CORRECTION : l'écran de pause thématique (pause_bg_url) est de nouveau utilisé —
+// mettre en pause via la couronne l'affiche, il suspendait auparavant sans écran.
+function openPauseScreen(){
+  paused=true;
+  document.getElementById('pause-overlay').classList.add('show');
+  if(bgMusic)bgMusic.pause();
+  releaseWakeLock();
+  updateTimer();updateTimerControls();saveState();
+}
+function closePauseScreen(){
+  document.getElementById('pause-overlay').classList.remove('show');
+  if(started&&paused){
+    paused=false;
+    lastNow=Date.now();   // repart de maintenant : le temps de pause n'est pas décompté
+    acquireWakeLock();
+    if(bgMusic&&!freeMode)bgMusic.play().catch(()=>{});
+  }
+  updateTimer();updateTimerControls();saveState();
+}
+
+// Resynchronisation quand l'app revient au premier plan
+document.addEventListener('visibilitychange',()=>{
+  if(document.visibilityState==='visible'){
+    if(started&&!paused&&!freeMode){acquireWakeLock();tick();}
+  }
+});
+window.addEventListener('pagehide',saveState);
+
+// ── VICTORY ──
+function confirmVictory(){document.getElementById('victory-confirm').classList.add('show');}
+function closeVC(){document.getElementById('victory-confirm').classList.remove('show');}
+function endVictory(){
+  clearInterval(timerInt);
+  if(bgMusic)bgMusic.pause();
+  releaseWakeLock();
+  clearSave();   // la partie est terminée : plus rien à reprendre
+  document.getElementById('victory-confirm').classList.remove('show');
+  // CORRECTION : temps réellement joué (usedMs), les pénalités ne gonflent plus ce chiffre
+  const tu=getSecsUsed();
+  const m=Math.floor(tu/60).toString().padStart(2,'0');
+  const s=(tu%60).toString().padStart(2,'0');
+  document.getElementById('v-players').textContent=players+' joueur'+(players>1?'s':'');
+  document.getElementById('v-time').textContent=m+':'+s;
+  document.getElementById('v-hints').textContent=history.length;
+  document.getElementById('v-penalty').textContent=totalPen+' min';
+  showScreen('s-victory');
+  launchConfetti();
+}
+
+function endTimeup(){
+  document.getElementById('tu-players').textContent=players+' joueur'+(players>1?'s':'');
+  document.getElementById('tu-hints').textContent=history.length;
+  document.getElementById('tu-penalty').textContent=totalPen+' min';
+  showScreen('s-timeup');
+}
+function applyFreeModeUI(){
+  const t=document.getElementById('timer');
+  t.textContent='LIBRE';
+  t.className='timer';
+  t.style.fontSize='34px';
+  document.getElementById('timer-sub').textContent='mode libre';
+  const tg=document.getElementById('crown-pause-item');
+  if(tg)tg.style.display='none';
+}
+function continueGame(){
+  started=true;paused=false;freeMode=true;
+  applyFreeModeUI();
+  showScreen('s-game');
+  saveState();
+}
+// CORRECTION : après une partie, on relance init() — l'écran missions n'est plus
+// figé sur "Chargement..." quand une seule mission existe (bug bloquant v10).
+function resetGame(){
+  clearInterval(timerInt);
+  releaseWakeLock();
+  clearSave();
+  if(bgMusic){bgMusic.pause();bgMusic.currentTime=0;}
+  cartes={};glaciere=null;loupeStep=0;started=false;paused=false;freeMode=false;history=[];
+  const tg=document.getElementById('crown-pause-item');if(tg){tg.style.display='';}
+  const tm=document.getElementById('timer');if(tm){tm.style.fontSize='';}
+  document.documentElement.style.setProperty('--accent','#ff6600');
+  const sgame=document.getElementById('s-game');
+  sgame.removeAttribute('style');
+  sgame.style.padding='0';
+  const smissions=document.getElementById('s-missions');
+  smissions.style.backgroundImage='none';
+  smissions.scrollTop=0;
+  showScreen('s-loading');
+  init();
+}
+
+// ── CONFETTI ──
+function launchConfetti(){
+  const c=document.getElementById('confetti');c.innerHTML='';
+  const colors=['#ff6600','#ffc84a','#00e676','#00d4ff','#ff4444','#ffffff','#ff88ff'];
+  for(let i=0;i<80;i++){
+    const el=document.createElement('div');el.className='confetto';
+    el.style.cssText=`left:${Math.random()*100}%;background:${colors[Math.floor(Math.random()*colors.length)]};width:${6+Math.random()*8}px;height:${6+Math.random()*8}px;animation-duration:${2+Math.random()*2}s;animation-delay:${Math.random()*1}s;border-radius:${Math.random()>0.5?'50%':'2px'}`;
+    c.appendChild(el);
+  }
+  setTimeout(()=>c.innerHTML='',5000);
+}
+
+// ── NUMPAD (CORRECTION : limite portée de 4 à 8 caractères — les codes plus longs
+//    configurés dans le back-office ne sont plus silencieusement impossibles à saisir) ──
+function np(type,d){if(npVals[type].length>=8)return;npVals[type]+=d;refreshND(type);}
+function npDel(type){npVals[type]=npVals[type].slice(0,-1);refreshND(type);if(type==='indice'){document.getElementById('hint-result').classList.remove('visible');document.getElementById('hint-error').classList.remove('visible');document.getElementById('jc-message').classList.remove('visible');}}
+function refreshND(type){document.getElementById('nd-'+type).textContent=npVals[type]||'—';}
+
+// ── PANELS ──
+function openPanel(id){
+  document.getElementById('panel-'+id).classList.add('show');
+  if(id==='loupe')updateLoupeBadge();
+}
+function closePanel(id){
+  document.getElementById('panel-'+id).classList.remove('show');
+  if(id==='mecanisme'){showMecaGrid();}
+  if(id==='micro'){stopMicro();}
+  if(id==='loupe'){stopLoupe();}
+  if(id==='boussole'){stopBoussoleChallenge();}
+  if(id==='code'){stopMorse();}
+}
+
+// ── VERROU PAR CODE (boussole / labyrinthe) ──
+// NOTE sécurité (voir README) : la vérification reste côté client tant que la
+// fonction serveur n'est pas déployée — les codes sont lisibles par un joueur outillé.
+let pendingGateAction=null;
+function requestAccessCode(type){
+  const code=(type==='boussole')?(glaciere&&glaciere.boussole_access_code):(glaciere&&glaciere.gyro_access_code);
+  if(!code){
+    if(type==='boussole'){openPanel('boussole');startBoussoleChallenge();}
+    if(type==='gyroscope'){showMeca('gyroscope');}
+    return;
+  }
+  pendingGateAction=type;
+  npVals.gate='';refreshND('gate');
+  document.getElementById('gate-error').style.display='none';
+  document.getElementById('gate-title').textContent=(type==='boussole')?'🔒 CODE — BOUSSOLE':'🔒 CODE — LABYRINTHE';
+  openPanel('gate');
+}
+function submitGateCode(){
+  if(!pendingGateAction)return;
+  const expected=(pendingGateAction==='boussole')?(glaciere.boussole_access_code||''):(glaciere.gyro_access_code||'');
+  if(npVals.gate && npVals.gate===String(expected).trim()){
+    closePanel('gate');
+    const action=pendingGateAction;pendingGateAction=null;
+    if(action==='boussole'){openPanel('boussole');startBoussoleChallenge();}
+    if(action==='gyroscope'){showMeca('gyroscope');}
+  }else{
+    document.getElementById('gate-error').style.display='block';
+    npVals.gate='';refreshND('gate');
+  }
+}
+function closeGate(){closePanel('gate');pendingGateAction=null;}
+
+const JC_MESSAGES = [
+  "Si t'as le moindre pépin, je suis médecin !! 👨‍⚕️",
+  "Essaie de pas me déranger pour des bricoles, je suis en vacances hein !! 😤",
+  "Ah jolie, il a pas fait exprès mais elle est belle !! 😂",
+  "On doit pas vraiment avoir le même sens de l'humour... 🤔",
+  "Mais c'est pas ma faute !! 🤷",
+  "Je vais me faire rapatrier par Europ Assistance !! 😱",
+];
+
+// ── SEARCH HINT ──
+function searchHint(){
+  const num=parseInt(npVals.indice);
+  document.getElementById('hint-result').classList.remove('visible');
+  document.getElementById('hint-error').classList.remove('visible');
+  document.getElementById('jc-message').classList.remove('visible');
+  document.getElementById('hint-answer-btn').classList.remove('visible');
+  if(!npVals.indice||isNaN(num)){return;}
+  const card=cartes[num];
+  if(!card){
+    const jcEl=document.getElementById('jc-message');
+    jcEl.textContent='"'+JC_MESSAGES[Math.floor(Math.random()*JC_MESSAGES.length)]+'"';
+    jcEl.classList.add('visible');
+    npVals.indice='';refreshND('indice');return;
+  }
+  currentCardNum=num;
+  const seen=history.find(h=>h.num===num);
+  document.getElementById('hint-badge').textContent='CARTE N°'+num;
+  document.getElementById('hint-penalty').textContent=seen?'déjà consulté':(penaltyActive?'−'+penaltyMin+' min':'sans pénalité');
+  document.getElementById('hint-penalty').style.color=seen?'var(--muted)':(penaltyActive?'var(--red)':'var(--green)');
+  const imgEl=document.getElementById('hint-img');
+  const ph=document.getElementById('hint-ph');
+  const imgUrl=safeUrl(card.image_url);
+  if(imgUrl){imgEl.src=imgUrl;imgEl.style.display='block';ph.style.display='none';}
+  else{imgEl.style.display='none';ph.style.display='block';}
+  const capEl=document.getElementById('hint-caption');
+  if(card.caption){capEl.textContent=card.caption;capEl.style.display='block';}else{capEl.style.display='none';}
+  // CORRECTION : la réponse déjà achetée est marquée — la revoir est gratuit
+  if(cartes[num+100]){
+    const abtn=document.getElementById('hint-answer-btn');
+    abtn.classList.add('visible');
+    abtn.textContent=(seen&&seen.answered)?'🔓 REVOIR LA RÉPONSE (gratuit)':'🔓 VOIR LA RÉPONSE (−'+penaltyMin+' min)';
+  }
+  document.getElementById('hint-result').classList.add('visible');
+  if(!seen){
+    applyPenalty(penaltyMin);
+    history.unshift({num,label:card.caption||('Carte n°'+num),answered:false});
+    renderHistory();
+    document.getElementById('topbar-ic-count').textContent=history.length;
+    saveState();
+  }
+  npVals.indice='';refreshND('indice');
+}
+
+// CORRECTION : la pénalité de réponse n'est appliquée qu'une seule fois par carte
+// (elle était re-facturée à chaque nouvelle consultation via l'historique)
+function showAnswer(){
+  if(!currentCardNum)return;
+  const ac=cartes[currentCardNum+100];if(!ac)return;
+  const h=history.find(x=>x.num===currentCardNum);
+  if(h&&!h.answered){applyPenalty(penaltyMin);h.answered=true;saveState();}
+  const imgEl=document.getElementById('hint-img');
+  const imgUrl=safeUrl(ac.image_url);
+  if(imgUrl){imgEl.src=imgUrl;imgEl.style.display='block';document.getElementById('hint-ph').style.display='none';}
+  const capEl=document.getElementById('hint-caption');
+  if(ac.caption){capEl.textContent=ac.caption;capEl.style.display='block';}
+  document.getElementById('hint-answer-btn').classList.remove('visible');
+  document.getElementById('hint-badge').textContent='RÉPONSE N°'+currentCardNum;
+}
+
+// CORRECTION : retour visuel quand aucun indice n'a encore été consulté
+function showLastHint(){
+  if(!history.length){showToast('👁️ Aucun indice consulté pour l\'instant');return;}
+  const last=history[0];
+  npVals.indice=String(last.num);
+  openPanel('indice');
+  searchHint();
+}
+
+function renderHistory(){
+  const s=document.getElementById('history-mini');
+  const l=document.getElementById('history-list');
+  if(!history.length){s.style.display='none';l.innerHTML='';return;}
+  s.style.display='block';
+  // CORRECTION XSS : libellé (caption venant de la base) échappé
+  l.innerHTML=history.map(h=>`<div class="history-item" onclick="reloadHint(${parseInt(h.num)||0})"><div class="history-num">${parseInt(h.num)||0}</div><div class="history-label">${esc(h.label)}</div><div class="history-arrow">Retour</div></div>`).join('');
+}
+function reloadHint(num){
+  npVals.indice=String(num);searchHint();
+  const p=document.querySelector('#panel-indice .panel');
+  if(p)p.scrollTo({top:0,behavior:'smooth'});
+}
+
+// ── MORSE (CORRECTION : plus de double chargement — un seul élément audio,
+//    la variable morseAudio inutilisée de la v10 a été supprimée) ──
+function playMorse(){
+  const audio=document.getElementById('morse-audio');
+  const nofile=document.getElementById('morse-nofile');
+  const playing=document.getElementById('morse-playing');
+  const btn=document.getElementById('morse-play-btn');
+  const morseUrl=glaciere&&glaciere.morse_url?glaciere.morse_url:null;
+  if(!morseUrl){nofile.style.display='block';return;}
+  nofile.style.display='none';
+  if(bgMusic)bgMusic.pause();
+  if(audio.src!==morseUrl)audio.src=morseUrl;
+  audio.play().catch(()=>{});
+  playing.classList.add('visible');
+  btn.textContent='⏹ ARRÊTER';
+  btn.onclick=stopMorse;
+  audio.onended=()=>{
+    playing.classList.remove('visible');
+    btn.textContent='▶ RÉÉCOUTER';
+    btn.onclick=playMorse;
+    if(bgMusic&&started&&!paused&&!freeMode)bgMusic.play().catch(()=>{});
+  };
+}
+function stopMorse(){
+  const audio=document.getElementById('morse-audio');
+  audio.pause();audio.currentTime=0;
+  document.getElementById('morse-playing').classList.remove('visible');
+  const btn=document.getElementById('morse-play-btn');
+  btn.textContent='▶ ÉCOUTER LE MORSE';
+  btn.onclick=playMorse;
+  if(bgMusic&&started&&!paused&&!freeMode)bgMusic.play().catch(()=>{});
+}
+
+// ── MÉCANISMES ──
+function showMeca(type){
+  openPanel('mecanisme');
+  document.querySelector('#panel-mecanisme .meca-grid').style.display='none';
+  document.getElementById('meca-gyroscope').style.display=type==='gyroscope'?'block':'none';
+  document.getElementById('meca-scanner').style.display=type==='scanner'?'block':'none';
+  if(type==='gyroscope'){resetMaze();startGyro();}
+}
+
+// Demande de permission capteurs (iOS 13+)
+async function ensureOrientationPermission(){
+  try{
+    if(typeof DeviceOrientationEvent!=='undefined'&&typeof DeviceOrientationEvent.requestPermission==='function'){
+      const st=await DeviceOrientationEvent.requestPermission();
+      return st==='granted';
+    }
+  }catch(_){return false;}
+  return true;
+}
+async function ensureMotionPermission(){
+  try{
+    if(typeof DeviceMotionEvent!=='undefined'&&typeof DeviceMotionEvent.requestPermission==='function'){
+      const st=await DeviceMotionEvent.requestPermission();
+      return st==='granted';
+    }
+  }catch(_){return false;}
+  return true;
+}
+
+// Calcul du cap : webkitCompassHeading (iOS) sinon alpha (Android)
+// NOTE audit : les anciennes fonctions startCompass/stopCompass/handleCompass et
+// togglePause (code mort visant des éléments inexistants) ont été supprimées.
+function computeHeadingFromEvent(e){
+  if(typeof e.webkitCompassHeading==='number'&&!isNaN(e.webkitCompassHeading)){
+    return {heading:e.webkitCompassHeading,absolute:true};
+  }
+  if(typeof e.alpha==='number'&&!isNaN(e.alpha)){
+    return {heading:(360-e.alpha)%360,absolute:!!e.absolute};
+  }
+  return null;
+}
+function smoothAngle(prev,next,f){
+  if(prev==null)return next;
+  let d=((next-prev+540)%360)-180;
+  return (prev+d*f+360)%360;
+}
+
+// ── DÉFI BOUSSOLE ──
+const BOUSSOLE_TOLERANCE=22;
+let boussoleActive=false,boussoleTarget=null,boussoleHold=0,boussoleLastTs=null,boussoleDone=false;
+let boussoleHasAbsolute=false,boussoleSmooth=null,boussoleRAF=null,boussoleHeading=null;
+
+async function startBoussoleChallenge(){
+  boussoleDone=false;boussoleHold=0;boussoleLastTs=null;boussoleSmooth=null;boussoleHeading=null;
+  boussoleTarget=(glaciere&&typeof glaciere.boussole_target==='number')?glaciere.boussole_target:(glaciere&&parseFloat(glaciere.boussole_target))||0;
+  document.getElementById('boussole-result').classList.remove('visible');
+  document.getElementById('boussole-progress').style.width='0%';
+  document.getElementById('boussole-status').textContent='Orientez-vous…';
+  const ok=await ensureOrientationPermission();
+  if(!ok){document.getElementById('boussole-status').textContent='⚠️ Accès aux capteurs refusé';return;}
+  boussoleActive=true;
+  window.addEventListener('deviceorientationabsolute',handleBoussoleOrientation,true);
+  window.addEventListener('deviceorientation',handleBoussoleOrientation,true);
+  boussoleRAF=requestAnimationFrame(boussoleLoop);
+}
+function stopBoussoleChallenge(){
+  boussoleActive=false;
+  window.removeEventListener('deviceorientationabsolute',handleBoussoleOrientation,true);
+  window.removeEventListener('deviceorientation',handleBoussoleOrientation,true);
+  if(boussoleRAF)cancelAnimationFrame(boussoleRAF);
+  boussoleRAF=null;
+}
+function handleBoussoleOrientation(e){
+  if(!boussoleActive)return;
+  const r=computeHeadingFromEvent(e);
+  if(!r)return;
+  if(r.absolute)boussoleHasAbsolute=true;
+  else if(boussoleHasAbsolute)return; // priorité au capteur absolu
+  boussoleSmooth=smoothAngle(boussoleSmooth,r.heading,0.25);
+  boussoleHeading=boussoleSmooth;
+}
+function angDiff(a,b){return Math.abs(((a-b+540)%360)-180);}
+function dirLabel(deg){
+  const dirs=['N','NE','E','SE','S','SO','O','NO'];
+  return dirs[Math.round(deg/45)%8];
+}
+function boussoleLoop(ts){
+  if(!boussoleActive)return;
+  updateBoussoleChallenge(ts);
+  boussoleRAF=requestAnimationFrame(boussoleLoop);
+}
+function updateBoussoleChallenge(ts){
+  if(boussoleHeading==null)return;
+  const deg=Math.round(boussoleHeading);
+  document.getElementById('boussole-deg').textContent=deg+'°';
+  document.getElementById('boussole-dir-label').textContent=dirLabel(deg);
+  document.getElementById('boussole-needle').style.transform='rotate('+(-boussoleHeading)+'deg)';
+  if(boussoleDone)return;
+  const diff=angDiff(boussoleHeading,boussoleTarget);
+  const inZone=diff<=BOUSSOLE_TOLERANCE;
+  if(boussoleLastTs==null)boussoleLastTs=ts;
+  const dt=(ts-boussoleLastTs)/1000;boussoleLastTs=ts;
+  if(inZone){boussoleHold=Math.min(3,boussoleHold+dt);}
+  else{boussoleHold=Math.max(0,boussoleHold-dt*2);}
+  document.getElementById('boussole-progress').style.width=(boussoleHold/3*100)+'%';
+  document.getElementById('boussole-status').textContent=inZone?'✅ Restez stable… '+Math.ceil(3-boussoleHold)+'s':'Cherchez la bonne direction…';
+  if(boussoleHold>=3){onBoussoleWin();}
+}
+function onBoussoleWin(){
+  boussoleDone=true;
+  const code=(glaciere&&glaciere.boussole_code)?glaciere.boussole_code:null;
+  const res=document.getElementById('boussole-result');
+  // CORRECTION XSS : code échappé avant insertion
+  res.innerHTML=code
+    ?'🎉 Direction trouvée !<br><span style="font-family:var(--fd);font-size:40px;letter-spacing:6px;color:var(--green)">'+esc(code)+'</span>'
+    :'🎉 Direction trouvée !';
+  res.classList.add('visible');
+  navigator.vibrate&&navigator.vibrate([100,50,100]);
+}
+
+// ── LABYRINTHE À BILLE ──
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+const MAZE_COLS=7,MAZE_ROWS=12,MAZE_CELL=38,MAZE_WT=5,MAZE_OX=12,MAZE_OY=12,MAZE_R=6,MAZE_MAXV=3.5;
+let mazeWalls=[],mazeBall={x:0,y:0,vx:0,vy:0},mazeGoal={x:0,y:0},mazeStart={x:0,y:0};
+let mazeWon=false,mazeRAF=null,gyroTilt={x:0,y:0};
+
+function generateMazeGrid(){
+  const rnd=mulberry32(1422);
+  const grid=[];
+  for(let r=0;r<MAZE_ROWS;r++){grid.push(Array(MAZE_COLS).fill(null).map(()=>({v:false,walls:[true,true,true,true]})));}
+  const stack=[[0,0]];grid[0][0].v=true;
+  while(stack.length){
+    const [r,c]=stack[stack.length-1];
+    const nbrs=[];
+    if(r>0&&!grid[r-1][c].v)nbrs.push([r-1,c,0,2]);
+    if(c<MAZE_COLS-1&&!grid[r][c+1].v)nbrs.push([r,c+1,1,3]);
+    if(r<MAZE_ROWS-1&&!grid[r+1][c].v)nbrs.push([r+1,c,2,0]);
+    if(c>0&&!grid[r][c-1].v)nbrs.push([r,c-1,3,1]);
+    if(!nbrs.length){stack.pop();continue;}
+    const [nr,nc,w1,w2]=nbrs[Math.floor(rnd()*nbrs.length)];
+    grid[r][c].walls[w1]=false;grid[nr][nc].walls[w2]=false;
+    grid[nr][nc].v=true;stack.push([nr,nc]);
+  }
+  return grid;
+}
+function gridToWalls(grid){
+  const walls=[];
+  const W=MAZE_COLS*MAZE_CELL,H=MAZE_ROWS*MAZE_CELL;
+  walls.push({x:MAZE_OX-MAZE_WT,y:MAZE_OY-MAZE_WT,w:W+MAZE_WT*2,h:MAZE_WT});
+  walls.push({x:MAZE_OX-MAZE_WT,y:MAZE_OY+H,w:W+MAZE_WT*2,h:MAZE_WT});
+  walls.push({x:MAZE_OX-MAZE_WT,y:MAZE_OY-MAZE_WT,w:MAZE_WT,h:H+MAZE_WT*2});
+  walls.push({x:MAZE_OX+W,y:MAZE_OY-MAZE_WT,w:MAZE_WT,h:H+MAZE_WT*2});
+  for(let r=0;r<MAZE_ROWS;r++)for(let c=0;c<MAZE_COLS;c++){
+    const cell=grid[r][c],x=MAZE_OX+c*MAZE_CELL,y=MAZE_OY+r*MAZE_CELL;
+    if(cell.walls[1]&&c<MAZE_COLS-1)walls.push({x:x+MAZE_CELL-MAZE_WT/2,y:y,w:MAZE_WT,h:MAZE_CELL});
+    if(cell.walls[2]&&r<MAZE_ROWS-1)walls.push({x:x,y:y+MAZE_CELL-MAZE_WT/2,w:MAZE_CELL,h:MAZE_WT});
+  }
+  return walls;
+}
+function resetMaze(){
+  const grid=generateMazeGrid();
+  mazeWalls=gridToWalls(grid);
+  mazeStart={x:MAZE_OX+MAZE_CELL/2,y:MAZE_OY+MAZE_CELL/2};
+  mazeGoal={x:MAZE_OX+(MAZE_COLS-1)*MAZE_CELL+MAZE_CELL/2,y:MAZE_OY+(MAZE_ROWS-1)*MAZE_CELL+MAZE_CELL/2};
+  mazeBall={x:mazeStart.x,y:mazeStart.y,vx:0,vy:0};
+  mazeWon=false;
+  document.getElementById('maze-result').classList.remove('visible');
+  drawMaze();
+}
+async function startGyro(){
+  const ok=await ensureMotionPermission();
+  const okO=await ensureOrientationPermission();
+  if(!ok&&!okO){document.getElementById('gyro-val').textContent='⚠️ Accès aux capteurs refusé';return;}
+  gyroActive=true;
+  window.addEventListener('deviceorientation',handleGyro,true);
+  if(mazeRAF)cancelAnimationFrame(mazeRAF);
+  mazeRAF=requestAnimationFrame(mazeLoop);
+}
+function stopGyro(){
+  gyroActive=false;
+  window.removeEventListener('deviceorientation',handleGyro,true);
+  if(mazeRAF)cancelAnimationFrame(mazeRAF);
+  mazeRAF=null;
+}
+function handleGyro(e){
+  if(!gyroActive)return;
+  if(typeof e.gamma==='number'&&typeof e.beta==='number'){
+    gyroTilt.x=Math.max(-30,Math.min(30,e.gamma))/30;
+    gyroTilt.y=Math.max(-30,Math.min(30,e.beta-25))/30;
+    document.getElementById('gyro-val').textContent='Inclinaison : '+Math.round(e.gamma)+'° / '+Math.round(e.beta)+'°';
+  }
+}
+function mazeLoop(){
+  if(!gyroActive)return;
+  updateMazePhysics();
+  drawMaze();
+  mazeRAF=requestAnimationFrame(mazeLoop);
+}
+function updateMazePhysics(){
+  if(mazeWon)return;
+  mazeBall.vx+=gyroTilt.x*0.45;
+  mazeBall.vy+=gyroTilt.y*0.45;
+  mazeBall.vx*=0.92;mazeBall.vy*=0.92;
+  mazeBall.vx=Math.max(-MAZE_MAXV,Math.min(MAZE_MAXV,mazeBall.vx));
+  mazeBall.vy=Math.max(-MAZE_MAXV,Math.min(MAZE_MAXV,mazeBall.vy));
+  let nx=mazeBall.x+mazeBall.vx,ny=mazeBall.y+mazeBall.vy;
+  for(const w of mazeWalls){
+    if(nx+MAZE_R>w.x&&nx-MAZE_R<w.x+w.w&&mazeBall.y+MAZE_R>w.y&&mazeBall.y-MAZE_R<w.y+w.h){nx=mazeBall.x;mazeBall.vx*=-0.3;}
+    if(mazeBall.x+MAZE_R>w.x&&mazeBall.x-MAZE_R<w.x+w.w&&ny+MAZE_R>w.y&&ny-MAZE_R<w.y+w.h){ny=mazeBall.y;mazeBall.vy*=-0.3;}
+  }
+  mazeBall.x=nx;mazeBall.y=ny;
+  const dx=mazeBall.x-mazeGoal.x,dy=mazeBall.y-mazeGoal.y;
+  if(Math.sqrt(dx*dx+dy*dy)<MAZE_CELL/2-4){onMazeWin();}
+}
+function drawMaze(){
+  const canvas=document.getElementById('maze-canvas');
+  if(!canvas)return;
+  const ctx=canvas.getContext('2d');
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.fillStyle='rgba(255,200,74,.25)';
+  ctx.beginPath();ctx.arc(mazeGoal.x,mazeGoal.y,MAZE_CELL/2-6,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle='#ffc84a';ctx.lineWidth=2;
+  ctx.beginPath();ctx.arc(mazeGoal.x,mazeGoal.y,MAZE_CELL/2-6,0,Math.PI*2);ctx.stroke();
+  ctx.fillStyle='#00d4ff';
+  for(const w of mazeWalls){ctx.fillRect(w.x,w.y,w.w,w.h);}
+  const grad=ctx.createRadialGradient(mazeBall.x-2,mazeBall.y-2,1,mazeBall.x,mazeBall.y,MAZE_R);
+  grad.addColorStop(0,'#ffffff');grad.addColorStop(1,'#ff6600');
+  ctx.fillStyle=grad;
+  ctx.beginPath();ctx.arc(mazeBall.x,mazeBall.y,MAZE_R,0,Math.PI*2);ctx.fill();
+}
+function onMazeWin(){
+  mazeWon=true;
+  navigator.vibrate&&navigator.vibrate([120,60,120]);
+  const content=document.getElementById('maze-result-content');
+  const imgUrl=safeUrl(glaciere&&glaciere.gyro_image_url);
+  const code=(glaciere&&glaciere.gyro_code)?glaciere.gyro_code:null;
+  // CORRECTION XSS : URL validée et code échappé
+  if(imgUrl){content.innerHTML='<img src="'+imgUrl+'" alt="Récompense du labyrinthe">';}
+  else if(code){content.innerHTML='🎉 Bravo !<br><span style="font-family:var(--fd);font-size:44px;letter-spacing:6px;color:#ffc84a">'+esc(code)+'</span>';}
+  else{content.innerHTML='🎉 Labyrinthe résolu !';}
+  document.getElementById('maze-result').classList.add('visible');
+}
+function closeMazeResult(){document.getElementById('maze-result').classList.remove('visible');}
+
+// ── MICRO ──
+function normalizeSpeech(s){
+  return String(s||'').toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+    .replace(/[^a-z0-9 ]/g,' ')
+    .replace(/\s+/g,' ').trim();
+}
+function wordOverlapRatio(target,heard){
+  const tw=target.split(' ').filter(Boolean);
+  if(!tw.length)return 0;
+  const hw=new Set(heard.split(' ').filter(Boolean));
+  let hits=0;
+  tw.forEach(w=>{if(hw.has(w))hits++;});
+  return hits/tw.length;
+}
+// CORRECTION : logique de vérification partagée entre la voix et la saisie clavier
+function checkMicroAnswer(rawTxt,label){
+  label=label||'🎤 Entendu';
+  const txt=normalizeSpeech(rawTxt);
+  const res=document.getElementById('micro-result');
+  res.textContent=label+' : « '+rawTxt+' »';
+  res.classList.add('visible');
+  let best=null,bestScore=0;
+  Object.values(cartes).forEach(c=>{
+    if(!c.caption||!(c.numero>=200))return;
+    const score=wordOverlapRatio(normalizeSpeech(c.caption),txt);
+    if(score>bestScore){bestScore=score;best=c;}
+  });
+  const matched=(bestScore>=0.7)?best:null;
+  if(matched&&matched.caption_code){
+    document.getElementById('micro-code-val').textContent=matched.caption_code;
+    document.getElementById('micro-code-reveal').style.display='block';
+    navigator.vibrate&&navigator.vibrate([100,50,100]);
+  }else{
+    document.getElementById('micro-code-reveal').style.display='none';
+  }
+}
+function validateMicroText(){
+  const inp=document.getElementById('micro-text');
+  const v=(inp.value||'').trim();
+  if(!v)return;
+  checkMicroAnswer(v,'⌨️ Saisi');
+}
+function toggleMicro(){microActive?stopMicro():startMicro();}
+function startMicro(){
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){
+    // CORRECTION : plus d'impasse sur Firefox/anciens navigateurs — repli clavier proposé
+    document.getElementById('micro-status').textContent='VOIX NON SUPPORTÉE — UTILISEZ LA SAISIE CI-DESSOUS';
+    document.getElementById('micro-btn').disabled=true;
+    document.getElementById('micro-text').focus();
+    return;
+  }
+  recognition=new SR();
+  recognition.lang='fr-FR';
+  recognition.continuous=false;
+  recognition.interimResults=false;
+  microActive=true;
+  document.getElementById('micro-status').textContent='🔴 PARLEZ MAINTENANT…';
+  document.getElementById('micro-btn').textContent='⏹ ARRÊTER';
+  recognition.onresult=(ev)=>{
+    const transcript=ev.results[0][0].transcript;
+    checkMicroAnswer(transcript,'🎤 Entendu');
+  };
+  recognition.onerror=()=>{document.getElementById('micro-status').textContent='⚠️ RIEN ENTENDU, RÉESSAYEZ';};
+  recognition.onend=()=>{stopMicro();};
+  recognition.start();
+}
+function stopMicro(){
+  microActive=false;
+  if(recognition){try{recognition.stop();}catch(_){}recognition=null;}
+  document.getElementById('micro-status').textContent='APPUYEZ POUR PARLER';
+  const btn=document.getElementById('micro-btn');
+  btn.textContent='🎤 PARLER';
+}
+
+// ── SCANNER QR (CORRECTION : jsQR chargé à la demande — plus de dépendance CDN au démarrage) ──
+let jsQRLoading=null;
+function loadJsQR(){
+  if(typeof jsQR!=='undefined')return Promise.resolve();
+  if(jsQRLoading)return jsQRLoading;
+  jsQRLoading=new Promise((resolve,reject)=>{
+    const s=document.createElement('script');
+    s.src='https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js';
+    s.onload=()=>resolve();
+    s.onerror=()=>{jsQRLoading=null;reject(new Error('jsQR load failed'));};
+    document.head.appendChild(s);
+  });
+  return jsQRLoading;
+}
+async function startScanner(){
+  const ph=document.getElementById('scanner-ph');
+  try{
+    ph.textContent='⏳ Chargement du lecteur…';
+    await loadJsQR();
+  }catch(e){
+    ph.textContent='❌ Lecteur QR indisponible — une connexion internet est nécessaire la première fois.';
+    return;
+  }
+  try{
+    scannerStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
+    const v=document.getElementById('scanner-video');
+    v.srcObject=scannerStream;
+    v.style.display='block';
+    ph.style.display='none';
+    document.getElementById('scanner-btn').style.display='none';
+    requestAnimationFrame(scanQR);
+  }catch(e){
+    ph.textContent='❌ Impossible d\'accéder à la caméra. Vérifiez les autorisations.';
+  }
+}
+function stopScanner(){
+  if(scannerStream){scannerStream.getTracks().forEach(t=>t.stop());scannerStream=null;}
+  const v=document.getElementById('scanner-video');
+  if(v){v.srcObject=null;v.style.display='none';}
+  const ph=document.getElementById('scanner-ph');
+  if(ph){ph.style.display='block';ph.textContent='📷 Appuyez sur le bouton pour activer la caméra';}
+  const b=document.getElementById('scanner-btn');
+  if(b)b.style.display='block';
+  const r=document.getElementById('scanner-result');
+  if(r)r.classList.remove('visible');
+}
+function scanQR(){
+  if(!scannerStream)return;
+  const v=document.getElementById('scanner-video');
+  if(v.readyState===v.HAVE_ENOUGH_DATA){
+    const canvas=document.createElement('canvas');
+    canvas.width=v.videoWidth;canvas.height=v.videoHeight;
+    const ctx=canvas.getContext('2d');
+    ctx.drawImage(v,0,0);
+    const imageData=ctx.getImageData(0,0,canvas.width,canvas.height);
+    const qr=jsQR(imageData.data,imageData.width,imageData.height);
+    if(qr&&qr.data){onQRDetected(qr.data);return;}
+  }
+  requestAnimationFrame(scanQR);
+}
+function onQRDetected(content){
+  navigator.vibrate&&navigator.vibrate([100,50,100]);
+  const r=document.getElementById('scanner-result');
+  // CORRECTION XSS : le contenu du QR (totalement contrôlé par l'extérieur !) est échappé
+  r.innerHTML='✅ QR CODE DÉTECTÉ<br><span style="font-family:var(--fd);font-size:22px;letter-spacing:2px;color:#fff">'+esc(content)+'</span>';
+  r.classList.add('visible');
+  if(scannerStream){scannerStream.getTracks().forEach(t=>t.stop());scannerStream=null;}
+  document.getElementById('scanner-video').style.display='none';
+}
+
+// ── LOUPE ──
+async function startLoupe(){
+  try{
+    loupeStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
+    const v=document.getElementById('loupe-video');
+    v.srcObject=loupeStream;
+    loupeTrack=loupeStream.getVideoTracks()[0];
+    document.getElementById('loupe-ph').style.display='none';
+    document.getElementById('loupe-start-btn').style.display='none';
+    document.getElementById('loupe-stop-btn').style.display='block';
+    document.getElementById('loupe-info').classList.add('visible');
+    document.getElementById('loupe-canvas').style.display='block';
+    updateLoupeBadge();
+    setupLoupeZoom();
+    v.onloadedmetadata=()=>{applyLoupeFilter();};
+  }catch(e){
+    document.getElementById('loupe-ph').textContent='❌ Impossible d\'accéder à la caméra. Vérifiez les autorisations.';
+  }
+}
+function setupLoupeZoom(){
+  loupeDigital=1;loupeZoomNative=false;
+  const range=document.getElementById('loupe-zoom-range');
+  const hint=document.getElementById('loupe-zoom-hint');
+  try{
+    const caps=loupeTrack.getCapabilities?loupeTrack.getCapabilities():{};
+    if(caps.zoom){
+      loupeZoomNative=true;
+      range.min=caps.zoom.min||1;range.max=Math.min(caps.zoom.max||4,8);range.step=caps.zoom.step||0.1;range.value=caps.zoom.min||1;
+      hint.textContent='zoom optique du téléphone';
+    }else{
+      range.min=1;range.max=4;range.step=0.1;range.value=1;
+      hint.textContent='zoom numérique';
+    }
+  }catch(_){range.min=1;range.max=4;range.step=0.1;range.value=1;hint.textContent='zoom numérique';}
+  document.getElementById('loupe-zoom').classList.add('visible');
+  onLoupeZoom(range.value);
+}
+function onLoupeZoom(val){
+  val=parseFloat(val);
+  document.getElementById('loupe-zoom-val').textContent=val.toFixed(1)+'×';
+  if(loupeZoomNative&&loupeTrack&&loupeTrack.applyConstraints){
+    loupeTrack.applyConstraints({advanced:[{zoom:val}]}).catch(()=>{loupeZoomNative=false;loupeDigital=val;});
+  }else{
+    loupeDigital=val;
+  }
+}
+// CORRECTION : badge + navigation manuelle (l'étape n'avance plus toute seule à la fermeture)
+function updateLoupeBadge(){
+  const badge=document.getElementById('loupe-step-badge');
+  const nav=document.getElementById('loupe-nav');
+  if(loupeConfigs.length>1){
+    badge.textContent='LOUPE '+(loupeStep+1)+' / '+loupeConfigs.length;
+    badge.classList.add('visible');
+    nav.classList.add('visible');
+  }else{
+    badge.classList.remove('visible');
+    nav.classList.remove('visible');
+  }
+}
+function loupeNav(d){
+  if(loupeConfigs.length<2)return;
+  loupeStep=Math.max(0,Math.min(loupeConfigs.length-1,loupeStep+d));
+  updateLoupeBadge();
+  saveState();
+}
+function applyLoupeFilter(){
+  const v=document.getElementById('loupe-video');
+  const canvas=document.getElementById('loupe-canvas');
+  const ctx=canvas.getContext('2d',{willReadFrequently:true});
+  // CORRECTION perf : traitement plafonné à 480px de large (au lieu de la pleine
+  // résolution caméra) — le filtre pixel par pixel ne fait plus chauffer le téléphone
+  const PROC_W=480;
+  function renderFrame(){
+    if(!loupeStream)return;
+    if(v.readyState>=2&&v.videoWidth>0){
+      const scale=Math.min(1,PROC_W/v.videoWidth);
+      const cw=Math.round(v.videoWidth*scale), ch=Math.round(v.videoHeight*scale);
+      if(canvas.width!==cw){canvas.width=cw;canvas.height=ch;}
+      let sx=0,sy=0,sw=v.videoWidth,sh=v.videoHeight;
+      if(!loupeZoomNative&&loupeDigital>1){
+        sw=v.videoWidth/loupeDigital;sh=v.videoHeight/loupeDigital;
+        sx=(v.videoWidth-sw)/2;sy=(v.videoHeight-sh)/2;
+      }
+      ctx.drawImage(v,sx,sy,sw,sh,0,0,cw,ch);
+      // le filtre est relu à chaque image : changer de loupe pendant l'usage fonctionne
+      const cfg=loupeConfigs[loupeStep]||{filtre:'contraste'};
+      const d=ctx.getImageData(0,0,cw,ch);
+      const px=d.data;
+      const f=cfg.filtre;
+      for(let i=0;i<px.length;i+=4){
+        const rr=px[i],gg=px[i+1],bb=px[i+2];
+        if(f==='rouge'){
+          const lum=0.3*rr+0.59*gg+0.11*bb;
+          const isRed=rr>100&&rr>gg*1.4&&rr>bb*1.4;
+          px[i]=isRed?255:lum;px[i+1]=isRed?0:lum;px[i+2]=isRed?0:lum;
+        }else if(f==='vert'){
+          const lum=0.3*rr+0.59*gg+0.11*bb;
+          const isGreen=gg>90&&gg>rr*1.25&&gg>bb*1.25;
+          px[i]=isGreen?0:lum;px[i+1]=isGreen?255:lum;px[i+2]=isGreen?0:lum;
+        }else if(f==='seuil'){
+          const lum=0.3*rr+0.59*gg+0.11*bb;
+          const vv=lum>110?255:0;
+          px[i]=vv;px[i+1]=vv;px[i+2]=vv;
+        }else{ // contraste par défaut
+          px[i]=Math.min(255,Math.max(0,(rr-128)*1.9+128));
+          px[i+1]=Math.min(255,Math.max(0,(gg-128)*1.9+128));
+          px[i+2]=Math.min(255,Math.max(0,(bb-128)*1.9+128));
+        }
+      }
+      ctx.putImageData(d,0,0);
+    }
+    loupeAnimFrame=requestAnimationFrame(renderFrame);
+  }
+  renderFrame();
+}
+// CORRECTION : plus d'avancement automatique de loupeStep à la fermeture —
+// les joueurs choisissent leur loupe avec les flèches ‹ ›
+function stopLoupe(){
+  if(loupeAnimFrame){cancelAnimationFrame(loupeAnimFrame);loupeAnimFrame=null;}
+  if(loupeStream){loupeStream.getTracks().forEach(t=>t.stop());loupeStream=null;}
+  loupeTrack=null;loupeDigital=1;
+  const v=document.getElementById('loupe-video');
+  if(v)v.srcObject=null;
+  document.getElementById('loupe-canvas').style.display='none';
+  document.getElementById('loupe-ph').style.display='block';
+  document.getElementById('loupe-ph').textContent='🔍 Activez la loupe pour révéler les secrets';
+  document.getElementById('loupe-start-btn').style.display='block';
+  document.getElementById('loupe-stop-btn').style.display='none';
+  document.getElementById('loupe-info').classList.remove('visible');
+  document.getElementById('loupe-zoom').classList.remove('visible');
+}
+
+// ── AUDIO ──
+function playBip(){
+  if(bipAudio){bipAudio.currentTime=0;bipAudio.play().catch(()=>{});return;}
+  try{
+    audioCtx=audioCtx||new (window.AudioContext||window.webkitAudioContext)();
+    const o=audioCtx.createOscillator(),g=audioCtx.createGain();
+    o.connect(g);g.connect(audioCtx.destination);
+    o.frequency.value=880;g.gain.value=0.12;
+    o.start();o.stop(audioCtx.currentTime+0.09);
+  }catch(_){}
+}
+function playWarmingSound(){
+  try{
+    audioCtx=audioCtx||new (window.AudioContext||window.webkitAudioContext)();
+    const o=audioCtx.createOscillator(),g=audioCtx.createGain();
+    o.connect(g);g.connect(audioCtx.destination);
+    o.type='sawtooth';o.frequency.setValueAtTime(220,audioCtx.currentTime);
+    o.frequency.linearRampToValueAtTime(440,audioCtx.currentTime+0.6);
+    g.gain.setValueAtTime(0.12,audioCtx.currentTime);
+    g.gain.linearRampToValueAtTime(0,audioCtx.currentTime+0.8);
+    o.start();o.stop(audioCtx.currentTime+0.8);
+  }catch(_){}
+}
+
+// ── PHOTO SOUVENIR ──
+function goPhoto(){showScreen('s-photo');}
+let photoStream=null;
+async function openCamera(){
+  try{
+    photoStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user'}});
+    const v=document.getElementById('video-preview');
+    v.srcObject=photoStream;v.style.display='block';
+    document.getElementById('capture-btn').classList.add('visible');
+    document.getElementById('open-camera-btn').style.display='none';
+    document.getElementById('canvas-preview').style.display='none';
+    document.getElementById('share-btn').classList.remove('visible');
+  }catch(e){
+    document.getElementById('photo-sub').textContent='❌ Impossible d\'accéder à la caméra. Vérifiez les autorisations.';
+  }
+}
+function capturePhoto(){
+  const v=document.getElementById('video-preview');
+  const canvas=document.getElementById('canvas-preview');
+  canvas.width=v.videoWidth;canvas.height=v.videoHeight;
+  const ctx=canvas.getContext('2d');
+  ctx.translate(canvas.width,0);ctx.scale(-1,1);
+  ctx.drawImage(v,0,0);
+  ctx.setTransform(1,0,0,1,0,0);
+  // Bandeau souvenir
+  const bh=Math.max(60,canvas.height*0.13);
+  ctx.fillStyle='rgba(7,17,31,.85)';
+  ctx.fillRect(0,canvas.height-bh,canvas.width,bh);
+  ctx.fillStyle='#ffc84a';
+  ctx.font='bold '+Math.round(bh*0.34)+'px sans-serif';
+  ctx.textAlign='center';
+  ctx.fillText('🏆 MISSION ACCOMPLIE !',canvas.width/2,canvas.height-bh*0.55);
+  ctx.fillStyle='#d0f0ff';
+  ctx.font=Math.round(bh*0.24)+'px sans-serif';
+  // CORRECTION : temps réellement joué (usedMs)
+  const tu=getSecsUsed();
+  const m=Math.floor(tu/60).toString().padStart(2,'0');
+  const s=(tu%60).toString().padStart(2,'0');
+  ctx.fillText((glaciere&&glaciere.nom_escape?glaciere.nom_escape:'Mission Apéro')+' — '+m+':'+s,canvas.width/2,canvas.height-bh*0.18);
+  finalizePhoto();
+}
+function finalizePhoto(){
+  if(photoStream){photoStream.getTracks().forEach(t=>t.stop());photoStream=null;}
+  document.getElementById('video-preview').style.display='none';
+  document.getElementById('capture-btn').classList.remove('visible');
+  const canvas=document.getElementById('canvas-preview');
+  canvas.style.display='block';
+  photoDataUrl=canvas.toDataURL('image/jpeg',0.9);
+  document.getElementById('share-btn').classList.add('visible');
+  document.getElementById('open-camera-btn').style.display='block';
+  document.getElementById('open-camera-btn').textContent='📷 REPRENDRE LA PHOTO';
+}
+async function sharePhoto(){
+  if(!photoDataUrl)return;
+  try{
+    const blob=await (await fetch(photoDataUrl)).blob();
+    const file=new File([blob],'mission-apero.jpg',{type:'image/jpeg'});
+    if(navigator.canShare&&navigator.canShare({files:[file]})){
+      await navigator.share({files:[file],title:'Mission accomplie ! 🏆'});
+    }else{
+      const a=document.createElement('a');
+      a.href=photoDataUrl;a.download='mission-apero.jpg';a.click();
+    }
+  }catch(_){}
+}
+
+// ── NAVIGATION ──
+function showScreen(id){
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  window.scrollTo(0,0);
+}
+
+// ── BOUTON RETOUR DU TÉLÉPHONE (CORRECTION : n'expulse plus de l'application) ──
+// Principe : une entrée "sentinelle" est maintenue dans l'historique du
+// navigateur. Le bouton retour (ou le geste de retour) déclenche alors popstate
+// au lieu de quitter la page ; on ferme l'élément le plus haut (panneau,
+// overlay, sous-vue) ou on recule d'un écran, puis on repousse la sentinelle.
+// Le retour ne peut plus vider l'historique : pour quitter, on ferme l'onglet.
+// Robustesse (fix Android) :
+//  1. pushState est REFUSÉ par Chrome sur file:// et content:// (test du fichier
+//     ouvert en local) → repli sur location.hash, qui crée aussi une entrée.
+//  2. Chrome ignore les entrées ajoutées avant toute interaction (protection
+//     anti-détournement) → armement au chargement ET à chaque geste.
+const BACK_HASH='#jeu';
+function armBackTrap(){
+  try{
+    if(history.state&&history.state.missionApero)return;   // déjà armé
+    history.pushState({missionApero:true},'');
+  }catch(_){
+    // repli file:// / content:// : le hash crée une entrée d'historique
+    if(location.hash!==BACK_HASH){location.hash=BACK_HASH;}
+  }
+}
+// armement au chargement (navigateurs sans restriction) + à chaque geste ;
+// un hash sentinelle résiduel (rechargement de page) est d'abord nettoyé
+// via location.replace, qui ne crée pas d'entrée d'historique
+if(location.hash===BACK_HASH){try{location.replace('#');}catch(_){}}
+armBackTrap();
+['pointerdown','touchstart','keydown'].forEach(ev=>
+  window.addEventListener(ev,armBackTrap,{passive:true,capture:true})
+);
+function isShown(id){const el=document.getElementById(id);return !!(el&&el.classList.contains('show'));}
+function currentScreen(){const s=document.querySelector('.screen.active');return s?s.id:null;}
+function showMecaGrid(){
+  stopGyro();stopScanner();
+  document.getElementById('meca-gyroscope').style.display='none';
+  document.getElementById('meca-scanner').style.display='none';
+  document.querySelector('#panel-mecanisme .meca-grid').style.display='';
+}
+window.addEventListener('popstate',()=>{
+  // Si on est SUR la sentinelle, l'événement vient de notre propre réarmement
+  // (le repli hash peut déclencher popstate) : ne rien faire.
+  if((history.state&&history.state.missionApero)||location.hash===BACK_HASH)return;
+  // Overlays à choix explicite : le retour ne les ferme pas (éviter une reprise
+  // de chrono ou un abandon de sauvegarde accidentels)
+  if(isShown('resume-overlay')||isShown('pause-overlay')){armBackTrap();return;}
+  if(isShown('tuto-overlay')){closeTuto();armBackTrap();return;}
+  if(isShown('victory-confirm')){closeVC();armBackTrap();return;}
+  // Panneau coulissant ouvert : le fermer (avec étape intermédiaire pour la machine)
+  const openPanelEl=document.querySelector('.panel-overlay.show');
+  if(openPanelEl){
+    const id=openPanelEl.id.replace('panel-','');
+    if(id==='mecanisme'){
+      const sub=document.getElementById('meca-gyroscope').style.display==='block'
+             ||document.getElementById('meca-scanner').style.display==='block';
+      if(sub){showMecaGrid();armBackTrap();return;}
+    }
+    closePanel(id);armBackTrap();return;
+  }
+  // Recul d'un écran quand c'est cohérent
+  const sc=currentScreen();
+  if(sc==='s-briefing'){showScreen('s-setup');armBackTrap();return;}
+  if(sc==='s-photo'){showScreen('s-victory');armBackTrap();return;}
+  if(sc==='s-setup'&&allGlacieres.length>1){showScreen('s-missions');armBackTrap();return;}
+  // Partie en cours : le retour met en pause au lieu de quitter
+  if(sc==='s-game'&&started&&!paused&&!freeMode){openPauseScreen();armBackTrap();return;}
+  // Racine (missions, setup mission unique, jeu à l'arrêt, victoire, défaite…) :
+  // on reste dans l'application — quitter se fait en fermant l'onglet
+  showToast('Pour quitter, fermez l\'onglet — la partie est sauvegardée 💾');
+  armBackTrap();
+});
+// Garde-fou supplémentaire : si malgré tout le navigateur tente de quitter la
+// page pendant une partie en cours, une confirmation native est demandée
+// (couvre aussi le rafraîchissement accidentel).
+window.addEventListener('beforeunload',(e)=>{
+  if(started&&!freeMode&&getSecsLeft()>0){e.preventDefault();e.returnValue='';}
+});
+
+// ── SERVICE WORKER (CORRECTION : mode hors-ligne / cache des visuels et sons —
+//    les balises PWA ne sont plus des promesses vides) ──
+if('serviceWorker' in navigator && location.protocol==='https:'){
+  navigator.serviceWorker.register('sw.js').catch(()=>{});
+}
+
+init();
+</script>
+</body>
+</html>
