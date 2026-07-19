@@ -26,6 +26,21 @@ self.addEventListener('fetch', (e) => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
 
+  // La page elle-même (navigations) : réseau d'abord — les mises à jour de
+  // l'application arrivent immédiatement, le cache ne sert qu'en cas de coupure
+  if (req.mode === 'navigate' || url.pathname.endsWith('/index.html')) {
+    e.respondWith(
+      fetch(req)
+        .then((r) => {
+          const cp = r.clone();
+          caches.open(CACHE).then((c) => c.put(req, cp));
+          return r;
+        })
+        .catch(() => caches.match(req).then((hit) => hit || caches.match('./index.html')))
+    );
+    return;
+  }
+
   // Données de mission : réseau d'abord (fraîcheur), cache en secours
   if (url.pathname.includes('/rest/v1/')) {
     e.respondWith(

@@ -2207,6 +2207,24 @@ if('serviceWorker' in navigator && location.protocol==='https:'){
   navigator.serviceWorker.register('sw.js').catch(()=>{});
 }
 
+// ── DÉTECTION D'OUVERTURE EN FICHIER LOCAL ──
+// Ouverte via file:// ou content:// (fichier lancé depuis les téléchargements),
+// la page tourne dans un bac à sable : Chrome y neutralise la manipulation
+// d'historique (bouton retour), la caméra, les capteurs et le service worker.
+// Un bandeau le signale pour éviter de conclure à un bug de l'application.
+if(location.protocol!=='https:'&&location.protocol!=='http:'){
+  const warn=document.createElement('div');
+  warn.textContent='⚠️ Fichier ouvert en local : bouton retour, caméra et capteurs sont limités par le navigateur. Hébergez le site en HTTPS pour un test réel (voir README).';
+  warn.style.cssText='position:fixed;bottom:0;left:0;right:0;z-index:400;background:#7a2c00;color:#ffd9b3;font-size:11px;line-height:1.5;padding:8px 36px 8px 12px;text-align:center;font-family:Outfit,sans-serif';
+  const x=document.createElement('button');
+  x.textContent='✕';
+  x.setAttribute('aria-label','Fermer l\'avertissement');
+  x.style.cssText='position:absolute;right:4px;top:50%;transform:translateY(-50%);background:none;border:none;color:#ffd9b3;font-size:15px;padding:8px;cursor:pointer';
+  x.onclick=()=>warn.remove();
+  warn.appendChild(x);
+  document.body.appendChild(warn);
+}
+
 init();
 </script>
 </body>
